@@ -6,58 +6,68 @@
     <button onclick="openModal()" class="btn-primary">+ Add program</button>
 </div>
 
-<div class="card overflow-hidden">
-    <table class="w-full text-sm">
-        <thead>
-            <tr class="border-b border-border text-left text-xs text-muted uppercase tracking-wider">
-                <th class="px-4 py-3">Name</th>
-                <th class="px-4 py-3">Country</th>
-                <th class="px-4 py-3">Deadline</th>
-                <th class="px-4 py-3">Status</th>
-                <th class="px-4 py-3">Fit</th>
-                <th class="px-4 py-3">Notes</th>
-                <th class="px-4 py-3 w-24"></th>
-            </tr>
-        </thead>
-        <tbody id="program-list">
-            {% for p in programs %}
-            <tr class="border-b border-border hover:bg-surface" data-id="{{ p['id'] }}">
-                <td class="px-4 py-3 font-medium">{{ p['name'] }}</td>
-                <td class="px-4 py-3 text-muted">{{ p['country'] }}</td>
-                <td class="px-4 py-3">{{ p['deadline'] }}</td>
-                <td class="px-4 py-3">
-                    <span class="badge {% if p['status'] == 'shortlisted' %}badge-low{% elif p['status'] == 'applied' %}badge-pending{% else %}badge-medium{% endif %}">
+<div class="space-y-4">
+    {% for p in programs %}
+    {% set checklist = p['checklist'] | default('{}') %}
+    <div class="card p-5">
+        <div class="flex items-start justify-between mb-3">
+            <div>
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="text-sm font-semibold">{{ p['name'] }}</span>
+                    <span class="text-xs text-muted">{{ p['country'] }}</span>
+                    <span class="badge {% if p['status'] == 'shortlisted' %}badge-low{% elif p['status'] == 'applied' %}badge-pending{% elif p['status'] == 'accepted' %}badge-approved{% else %}badge-medium{% endif %}">
                         {{ p['status'] }}
                     </span>
-                </td>
-                <td class="px-4 py-3">
+                </div>
+                {% if p['supervisor'] %}
+                <div class="text-xs text-muted mb-1">Supervisors: {{ p['supervisor'] }}</div>
+                {% endif %}
+                <div class="text-xs text-muted">Deadline: {{ p['deadline'] or '—' }}</div>
+            </div>
+            <div class="flex items-center gap-3">
+                <div class="text-right">
                     <div class="flex items-center gap-2">
-                        <div class="w-16 h-1.5 bg-neutral-200 rounded-full overflow-hidden">
+                        <div class="w-20 h-1.5 bg-neutral-200 rounded-full overflow-hidden">
                             <div class="h-full bg-accent rounded-full" style="width:{{ p['fit_score'] }}%"></div>
                         </div>
-                        <span class="text-xs text-muted">{{ p['fit_score'] }}</span>
+                        <span class="text-xs text-muted w-6">{{ p['fit_score'] }}</span>
                     </div>
-                </td>
-                <td class="px-4 py-3 text-xs text-muted max-w-[200px] truncate">{{ p['notes'] }}</td>
-                <td class="px-4 py-3 text-right">
-                    <button onclick='editProgram({{ p | rowtodict | tojson }})' class="text-xs text-accent hover:underline mr-2">Edit</button>
-                    <button onclick="deleteProgram({{ p['id'] }})" class="btn-danger">Delete</button>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+                </div>
+                <button onclick='editProgram({{ p | rowtodict | tojson }})' class="text-xs text-accent hover:underline">Edit</button>
+                <button onclick="deleteProgram({{ p['id'] }})" class="btn-danger">Delete</button>
+            </div>
+        </div>
+        {% if p['notes'] %}
+        <p class="text-xs text-neutral-500 mb-3">{{ p['notes'] }}</p>
+        {% endif %}
+
+        <!-- Application checklist -->
+        <details class="text-xs">
+            <summary class="text-accent cursor-pointer font-medium">Application checklist</summary>
+            <div class="mt-2 grid grid-cols-2 gap-1" id="checklist-{{ p['id'] }}">
+                {% for item, done in (checklist | tojson | string | load_checklist).items() %}
+                <label class="flex items-center gap-2 py-1 cursor-pointer">
+                    <input type="checkbox" {% if done %}checked{% endif %}
+                           onchange="updateChecklist({{ p['id'] }})"
+                           data-item="{{ item }}"
+                           class="rounded border-neutral-300 text-accent focus:ring-accent">
+                    <span class="{% if done %}line-through text-muted{% endif %}">{{ item }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </details>
+    </div>
+    {% endfor %}
 </div>
 
 <!-- Modal -->
 <div id="modal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50 hidden">
     <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
         <h3 id="modal-title" class="text-sm font-semibold mb-4">Add Program</h3>
-        <input type="hidden" id="prog-id">
         <div class="space-y-3">
             <div>
                 <label class="text-xs text-muted">Name</label>
-                <input id="prog-name" class="w-full" placeholder="University name">
+                <input id="prog-name" class="w-full" placeholder="University / program name">
             </div>
             <div class="grid grid-cols-2 gap-3">
                 <div>
@@ -86,6 +96,10 @@
                 </div>
             </div>
             <div>
+                <label class="text-xs text-muted">Potential supervisors</label>
+                <input id="prog-supervisor" class="w-full" placeholder="Names, comma-separated">
+            </div>
+            <div>
                 <label class="text-xs text-muted">Notes</label>
                 <textarea id="prog-notes" class="w-full h-20"></textarea>
             </div>
@@ -96,7 +110,6 @@
         </div>
     </div>
 </div>
-
 {% endblock %}
 
 {% block scripts %}
@@ -106,7 +119,7 @@ let editingId = null;
 function openModal() {
     editingId = null;
     document.getElementById('modal-title').textContent = 'Add Program';
-    ['prog-name','prog-country','prog-deadline','prog-notes'].forEach(id => document.getElementById(id).value = '');
+    ['prog-name','prog-country','prog-deadline','prog-notes','prog-supervisor'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('prog-status').value = 'researching';
     document.getElementById('prog-fit').value = 50;
     document.getElementById('modal').classList.remove('hidden');
@@ -120,13 +133,12 @@ function editProgram(p) {
     document.getElementById('prog-deadline').value = p.deadline || '';
     document.getElementById('prog-status').value = p.status || 'researching';
     document.getElementById('prog-fit').value = p.fit_score || 0;
+    document.getElementById('prog-supervisor').value = p.supervisor || '';
     document.getElementById('prog-notes').value = p.notes || '';
     document.getElementById('modal').classList.remove('hidden');
 }
 
-function closeModal() {
-    document.getElementById('modal').classList.add('hidden');
-}
+function closeModal() { document.getElementById('modal').classList.add('hidden'); }
 
 async function saveProgram() {
     const data = {
@@ -135,6 +147,7 @@ async function saveProgram() {
         deadline: document.getElementById('prog-deadline').value,
         status: document.getElementById('prog-status').value,
         fit_score: parseInt(document.getElementById('prog-fit').value) || 0,
+        supervisor: document.getElementById('prog-supervisor').value,
         notes: document.getElementById('prog-notes').value,
     };
     if (!data.name) { toast('Name is required'); return; }
@@ -152,8 +165,16 @@ async function saveProgram() {
 async function deleteProgram(id) {
     if (!confirm('Delete this program?')) return;
     await api(`/api/programs/${id}`, { method: 'DELETE' });
-    toast('Program deleted');
     location.reload();
+}
+
+async function updateChecklist(pid) {
+    const container = document.getElementById(`checklist-${pid}`);
+    const checks = container.querySelectorAll('input[type=checkbox]');
+    const checklist = {};
+    checks.forEach(cb => { checklist[cb.dataset.item] = cb.checked; });
+    await api(`/api/programs/${pid}/checklist`, { method: 'POST', body: { checklist } });
+    toast('Checklist updated');
 }
 </script>
 {% endblock %}

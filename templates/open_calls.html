@@ -1,38 +1,71 @@
 {% extends "base.html" %}
 {% block title %}Open Calls — PhD Command Center{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-6">
+<div class="flex items-center justify-between mb-4">
     <h2 class="text-lg font-semibold">Open Calls</h2>
-    <button onclick="generateCalls()" id="gen-btn" class="btn-primary">
-        <span id="gen-text">Scan sources</span>
-        <span id="gen-spin" class="spinner hidden ml-2"></span>
-    </button>
+    <div class="flex gap-2">
+        <button onclick="clearLow()" class="btn-outline text-xs">Clear irrelevant</button>
+        <button onclick="generateCalls()" id="gen-btn" class="btn-primary">
+            <span id="gen-text">Scan sources</span>
+            <span id="gen-spin" class="spinner hidden ml-2"></span>
+        </button>
+    </div>
 </div>
 
-<p class="text-xs text-muted mb-4">Scraped from e-flux, Archinect, FindAPhD, WikiCFP, EURAXESS, jobs.ac.uk, and AcademicPositions — filtered by AI for relevance.</p>
+<p class="text-xs text-muted mb-2">Scraped from e-flux, Archinect, FindAPhD, WikiCFP, EURAXESS, jobs.ac.uk — sorted by relevance to your research angle.</p>
+
+<!-- Filters -->
+<div class="flex gap-2 mb-4">
+    <button onclick="filterCalls('all')" class="btn-outline filter-btn active-filter" data-f="all">All</button>
+    <button onclick="filterCalls('saved')" class="btn-outline filter-btn" data-f="saved">Saved</button>
+    <button onclick="filterCalls('housing')" class="btn-outline filter-btn" data-f="housing">Housing</button>
+    <button onclick="filterCalls('heritage')" class="btn-outline filter-btn" data-f="heritage">Heritage</button>
+    <button onclick="filterCalls('urban')" class="btn-outline filter-btn" data-f="urban">Urban</button>
+    <button onclick="filterCalls('postwar')" class="btn-outline filter-btn" data-f="postwar">Postwar</button>
+    <button onclick="filterCalls('opportunity')" class="btn-outline filter-btn" data-f="opportunity">PhD/Grants</button>
+    <button onclick="filterCalls('event')" class="btn-outline filter-btn" data-f="event">Events</button>
+</div>
 
 {% if calls %}
-<div class="space-y-3">
+<div class="space-y-2" id="calls-list">
     {% for c in calls %}
-    <div class="card p-4">
+    <div class="card p-4 call-row {% if c['saved'] %}border-l-2 border-accent{% endif %}"
+         data-cats="{{ c['category'] }}" data-saved="{{ c['saved'] }}">
         <div class="flex items-start justify-between">
             <div class="flex-1">
                 <div class="flex items-center gap-2 mb-1">
+                    <!-- Relevance score -->
+                    <span class="text-[10px] font-mono px-1.5 py-0.5 rounded
+                        {% if c['relevance_score'] >= 30 %}bg-green-100 text-green-800
+                        {% elif c['relevance_score'] >= 10 %}bg-yellow-100 text-yellow-800
+                        {% else %}bg-neutral-100 text-neutral-500{% endif %}">
+                        {{ c['relevance_score'] }}
+                    </span>
                     <span class="text-sm font-medium">{{ c['title'] }}</span>
                     <span class="badge badge-pending">{{ c['type'] }}</span>
-                    {% if c['source'] and c['source'] != 'ai' %}
                     <span class="text-[10px] text-muted bg-neutral-100 px-1.5 py-0.5 rounded">{{ c['source'] }}</span>
-                    {% endif %}
                 </div>
-                <p class="text-xs text-muted mb-2">{{ c['description'] }}</p>
-                <div class="flex items-center gap-4 text-xs text-muted">
-                    {% if c['deadline'] %}<span>Deadline: {{ c['deadline'] }}</span>{% endif %}
+                {% if c['description'] %}
+                <p class="text-xs text-muted mb-1">{{ c['description'][:200] }}</p>
+                {% endif %}
+                <div class="flex items-center gap-3 text-xs text-muted">
+                    {% if c['deadline'] %}<span>{{ c['deadline'] }}</span>{% endif %}
                     {% if c['url'] and c['url'] != 'N/A' %}
-                    <a href="{{ c['url'] }}" target="_blank" class="text-accent hover:underline">Link</a>
+                    <a href="{{ c['url'] }}" target="_blank" class="text-accent hover:underline">Open link</a>
+                    {% endif %}
+                    {% if c['category'] %}
+                    {% for cat in c['category'].split(', ') %}
+                    <span class="text-[10px] px-1 py-0.5 bg-blue-50 text-blue-600 rounded">{{ cat }}</span>
+                    {% endfor %}
                     {% endif %}
                 </div>
             </div>
-            <button onclick="deleteCall({{ c['id'] }})" class="btn-danger ml-4">Remove</button>
+            <div class="flex items-center gap-2 ml-3 flex-shrink-0">
+                <button onclick="toggleSave({{ c['id'] }})" class="text-xs {% if c['saved'] %}text-accent font-semibold{% else %}text-muted{% endif %} hover:text-accent">
+                    {% if c['saved'] %}&#9733; Saved{% else %}&#9734; Save{% endif %}
+                </button>
+                <button onclick="deleteCall({{ c['id'] }})" class="btn-danger">Remove</button>
+            </div>
         </div>
     </div>
     {% endfor %}
@@ -40,12 +73,15 @@
 {% else %}
 <div class="card p-12 text-center">
     <p class="text-sm text-muted mb-3">No open calls yet.</p>
-    <p class="text-xs text-muted">Click "Scan sources" to scrape real conferences and opportunities.</p>
+    <p class="text-xs text-muted">Click "Scan sources" to find real conferences and opportunities.</p>
 </div>
 {% endif %}
 {% endblock %}
 
 {% block scripts %}
+<style>
+.active-filter { background: #eff6ff !important; color: #2563eb !important; border-color: #2563eb !important; }
+</style>
 <script>
 async function generateCalls() {
     const btn = document.getElementById('gen-btn');
@@ -56,19 +92,41 @@ async function generateCalls() {
     spin.classList.remove('hidden');
     const res = await api('/api/open-calls/generate', { method: 'POST' });
     if (res.ok) {
-        toast(`Found ${res.count} opportunities`);
+        toast(`Found ${res.count} new opportunities`);
         location.reload();
     } else {
-        toast(res.error || 'Generation failed');
+        toast(res.error || 'Scan failed');
         btn.disabled = false;
         text.textContent = 'Scan sources';
         spin.classList.add('hidden');
     }
 }
 
+async function toggleSave(id) {
+    await api(`/api/open-calls/${id}/save`, { method: 'POST' });
+    location.reload();
+}
+
 async function deleteCall(id) {
     await api(`/api/open-calls/${id}`, { method: 'DELETE' });
     location.reload();
+}
+
+async function clearLow() {
+    if (!confirm('Remove all unsaved items with low relevance?')) return;
+    await api('/api/open-calls/clear-low', { method: 'POST' });
+    toast('Cleared low-relevance items');
+    location.reload();
+}
+
+function filterCalls(cat) {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active-filter'));
+    document.querySelector(`[data-f="${cat}"]`).classList.add('active-filter');
+    document.querySelectorAll('.call-row').forEach(row => {
+        if (cat === 'all') { row.style.display = ''; return; }
+        if (cat === 'saved') { row.style.display = row.dataset.saved === '1' ? '' : 'none'; return; }
+        row.style.display = row.dataset.cats.includes(cat) ? '' : 'none';
+    });
 }
 </script>
 {% endblock %}

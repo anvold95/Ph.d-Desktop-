@@ -3,7 +3,6 @@
 {% block content %}
 <div class="flex items-center justify-between mb-6">
     <h2 class="text-lg font-semibold">Dashboard</h2>
-    <span class="text-xs text-muted">{{ now().strftime('%A %d %B %Y') if now is defined else '' }}</span>
 </div>
 
 <!-- Research Angle -->
@@ -14,7 +13,7 @@
     </div>
     <p id="angle-display" class="text-sm leading-relaxed">{{ angle }}</p>
     <div id="angle-editor" class="hidden mt-2">
-        <textarea id="angle-input" class="w-full h-20" >{{ angle }}</textarea>
+        <textarea id="angle-input" class="w-full h-20">{{ angle }}</textarea>
         <div class="flex gap-2 mt-2">
             <button onclick="saveAngle()" class="btn-primary">Save</button>
             <button onclick="toggleAngleEdit()" class="btn-outline">Cancel</button>
@@ -23,7 +22,7 @@
 </div>
 
 <!-- Stats row -->
-<div class="grid grid-cols-4 gap-4 mb-5">
+<div class="grid grid-cols-5 gap-4 mb-5">
     <div class="card p-4">
         <div class="text-xs text-muted mb-1">Programs</div>
         <div class="text-2xl font-semibold">{{ programs|length }}</div>
@@ -31,33 +30,47 @@
     <div class="card p-4">
         <div class="text-xs text-muted mb-1">Tasks done</div>
         <div class="text-2xl font-semibold">{{ done_tasks }}<span class="text-sm text-muted font-normal"> / {{ total_tasks }}</span></div>
+        {% if total_tasks > 0 %}
+        <div class="w-full h-1 bg-neutral-200 rounded-full mt-2 overflow-hidden">
+            <div class="h-full bg-accent rounded-full" style="width:{{ (done_tasks / total_tasks * 100)|int }}%"></div>
+        </div>
+        {% endif %}
     </div>
     <div class="card p-4">
         <div class="text-xs text-muted mb-1">Inbox pending</div>
         <div class="text-2xl font-semibold">{{ inbox_pending }}</div>
     </div>
     <div class="card p-4">
+        <div class="text-xs text-muted mb-1">Saved calls</div>
+        <div class="text-2xl font-semibold">{{ saved_calls }}</div>
+    </div>
+    <div class="card p-4 {% if days_left is not none and days_left <= 30 %}border-red-200 bg-red-50{% endif %}">
         <div class="text-xs text-muted mb-1">Next deadline</div>
-        <div class="text-sm font-semibold">
-            {% if upcoming_deadlines %}
-                {{ upcoming_deadlines[0]['name'] }}<br>
-                <span class="text-muted font-normal">{{ upcoming_deadlines[0]['deadline'] }}</span>
-            {% else %}
-                —
-            {% endif %}
-        </div>
+        {% if days_left is not none %}
+        <div class="text-2xl font-semibold {% if days_left <= 30 %}text-red-600{% endif %}">{{ days_left }}d</div>
+        <div class="text-[10px] text-muted">{{ upcoming_deadlines[0]['name'] }}</div>
+        {% else %}
+        <div class="text-sm text-muted">—</div>
+        {% endif %}
     </div>
 </div>
 
-<!-- Quick actions -->
-<div class="flex gap-3 mb-5">
-    <a href="/open-calls" class="btn-outline">Scan Open Calls</a>
-    <a href="/inbox" class="btn-outline">View Inbox</a>
-    <a href="/chat" class="btn-outline">AI Chat</a>
-    <a href="/voice" class="btn-outline">Train Voice</a>
+<!-- Next Actions -->
+{% if next_actions %}
+<div class="card p-4 mb-5 border-l-2 border-accent">
+    <h3 class="text-xs font-semibold uppercase tracking-wider text-muted mb-2">Suggested next actions</h3>
+    <ul class="space-y-1">
+        {% for a in next_actions %}
+        <li class="flex items-center gap-2 text-sm">
+            <span class="text-accent">&#8594;</span>
+            <a href="{{ a.url }}" class="hover:text-accent hover:underline">{{ a.text }}</a>
+        </li>
+        {% endfor %}
+    </ul>
 </div>
+{% endif %}
 
-<!-- Two columns: upcoming deadlines + recent tasks -->
+<!-- Two columns -->
 <div class="grid grid-cols-2 gap-5">
     <div class="card p-5">
         <h3 class="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Upcoming Deadlines</h3>
@@ -87,11 +100,10 @@
             {% endfor %}
         </ul>
         {% else %}
-        <p class="text-sm text-muted">No active tasks.</p>
+        <p class="text-sm text-muted">All tasks done!</p>
         {% endif %}
     </div>
 </div>
-
 {% endblock %}
 
 {% block scripts %}
