@@ -4,12 +4,12 @@
 <div class="flex items-center justify-between mb-6">
     <h2 class="text-lg font-semibold">Open Calls</h2>
     <button onclick="generateCalls()" id="gen-btn" class="btn-primary">
-        <span id="gen-text">Generate with AI</span>
+        <span id="gen-text">Scan sources</span>
         <span id="gen-spin" class="spinner hidden ml-2"></span>
     </button>
 </div>
 
-<p class="text-xs text-muted mb-4">AI-generated conferences, CFPs, grants, and fellowships relevant to your research angle. Verify details independently.</p>
+<p class="text-xs text-muted mb-4">Scraped from WikiCFP, ConferenceIndex, and EURAXESS — filtered by AI for relevance to your research angle.</p>
 
 {% if calls %}
 <div class="space-y-3">
@@ -20,6 +20,9 @@
                 <div class="flex items-center gap-2 mb-1">
                     <span class="text-sm font-medium">{{ c['title'] }}</span>
                     <span class="badge badge-pending">{{ c['type'] }}</span>
+                    {% if c['source'] and c['source'] != 'ai' %}
+                    <span class="text-[10px] text-muted bg-neutral-100 px-1.5 py-0.5 rounded">{{ c['source'] }}</span>
+                    {% endif %}
                 </div>
                 <p class="text-xs text-muted mb-2">{{ c['description'] }}</p>
                 <div class="flex items-center gap-4 text-xs text-muted">
@@ -37,7 +40,7 @@
 {% else %}
 <div class="card p-12 text-center">
     <p class="text-sm text-muted mb-3">No open calls yet.</p>
-    <p class="text-xs text-muted">Click "Generate with AI" to scan for relevant opportunities.</p>
+    <p class="text-xs text-muted">Click "Scan sources" to scrape real conferences and opportunities.</p>
 </div>
 {% endif %}
 {% endblock %}

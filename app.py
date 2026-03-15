@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import sqlite3
 import logging
@@ -7,6 +8,7 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, g, redirect, url_for
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup
 
 load_dotenv()
 
@@ -174,7 +176,6 @@ def ollama_generate(prompt, system=None, as_json=False):
 
 def parse_json_response(raw, expect_list=False):
     """Robustly extract JSON from Ollama responses that may contain markdown fences."""
-    import re
     # Strip markdown code fences
     cleaned = re.sub(r'```(?:json)?\s*', '', raw)
     cleaned = cleaned.strip()
@@ -248,41 +249,221 @@ Always respond in English. Be precise and actionable."""
 
 
 # ---------------------------------------------------------------------------
+# Web scraping — real open calls
+# ---------------------------------------------------------------------------
+
+SCRAPE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+SEARCH_KEYWORDS = [
+    "architecture", "urban design", "housing", "adaptive reuse",
+    "urban studies", "built environment", "heritage",
+]
+
+
+def scrape_wikicfp(keywords=None):
+    """Scrape WikiCFP for architecture/urban-related CFPs."""
+    results = []
+    search_terms = keywords or ["architecture", "urban design", "housing"]
+    for term in search_terms[:3]:
+        try:
+            url = f"http://www.wikicfp.com/cfp/servlet/tool.search?q={term.replace(' ', '+')}&year=f"
+            r = requests.get(url, headers=SCRAPE_HEADERS, timeout=15)
+            if r.status_code != 200:
+                continue
+            soup = BeautifulSoup(r.text, "html.parser")
+            rows = soup.select("table.wikitable tr")
+            for row in rows:
+                cells = row.find_all("td")
+                if len(cells) >= 3:
+                    link_el = cells[0].find("a")
+                    if not link_el:
+                        continue
+                    title = link_el.get_text(strip=True)
+                    href = link_el.get("href", "")
+                    if href and not href.startswith("http"):
+                        href = f"http://www.wikicfp.com{href}"
+                    desc = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+                    deadline = cells[2].get_text(strip=True) if len(cells) > 2 else ""
+                    if title:
+                        results.append({
+                            "title": title,
+                            "type": "cfp",
+                            "description": desc,
+                            "deadline": deadline,
+                            "url": href,
+                            "source": "WikiCFP",
+                        })
+        except Exception as e:
+            log.warning("WikiCFP scrape error for '%s': %s", term, e)
+    return results
+
+
+def scrape_conference_index(keywords=None):
+    """Scrape conferenceindex.org for relevant conferences."""
+    results = []
+    search_terms = keywords or ["architecture", "urban-design"]
+    for term in search_terms[:2]:
+        try:
+            url = f"https://conferenceindex.org/conferences/{term.replace(' ', '-')}"
+            r = requests.get(url, headers=SCRAPE_HEADERS, timeout=15)
+            if r.status_code != 200:
+                continue
+            soup = BeautifulSoup(r.text, "html.parser")
+            items = soup.select(".list-group-item, .conference-item, article, .card")
+            for item in items[:15]:
+                title_el = item.find(["h3", "h4", "h5", "a"])
+                if not title_el:
+                    continue
+                title = title_el.get_text(strip=True)
+                link = ""
+                a_tag = item.find("a", href=True)
+                if a_tag:
+                    link = a_tag["href"]
+                    if not link.startswith("http"):
+                        link = f"https://conferenceindex.org{link}"
+                desc_el = item.find("p")
+                desc = desc_el.get_text(strip=True) if desc_el else ""
+                date_el = item.find(class_=re.compile(r"date|time|deadline", re.I))
+                date_text = date_el.get_text(strip=True) if date_el else ""
+                if title and len(title) > 5:
+                    results.append({
+                        "title": title,
+                        "type": "conference",
+                        "description": desc[:200],
+                        "deadline": date_text,
+                        "url": link,
+                        "source": "ConferenceIndex",
+                    })
+        except Exception as e:
+            log.warning("ConferenceIndex scrape error for '%s': %s", term, e)
+    return results
+
+
+def scrape_euraxess():
+    """Scrape EURAXESS for PhD/research positions in architecture."""
+    results = []
+    try:
+        url = "https://euraxess.ec.europa.eu/jobs/search/field_research_profile/first-stage-researcher-r1-702?keywords=architecture+housing"
+        r = requests.get(url, headers=SCRAPE_HEADERS, timeout=15)
+        if r.status_code != 200:
+            return results
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select(".views-row, .node--type-job-offer, article")
+        for item in items[:10]:
+            title_el = item.find(["h2", "h3", "a"])
+            if not title_el:
+                continue
+            title = title_el.get_text(strip=True)
+            link = ""
+            a_tag = title_el if title_el.name == "a" else item.find("a", href=True)
+            if a_tag and a_tag.get("href"):
+                link = a_tag["href"]
+                if not link.startswith("http"):
+                    link = f"https://euraxess.ec.europa.eu{link}"
+            desc_el = item.find(class_=re.compile(r"field|body|summary", re.I))
+            desc = desc_el.get_text(strip=True)[:200] if desc_el else ""
+            deadline_el = item.find(class_=re.compile(r"deadline|date", re.I))
+            deadline = deadline_el.get_text(strip=True) if deadline_el else ""
+            if title and len(title) > 5:
+                results.append({
+                    "title": title,
+                    "type": "fellowship",
+                    "description": desc,
+                    "deadline": deadline,
+                    "url": link,
+                    "source": "EURAXESS",
+                })
+    except Exception as e:
+        log.warning("EURAXESS scrape error: %s", e)
+    return results
+
+
+def scrape_all_sources():
+    """Scrape all sources and return combined results."""
+    all_results = []
+    all_results.extend(scrape_wikicfp())
+    all_results.extend(scrape_conference_index())
+    all_results.extend(scrape_euraxess())
+    log.info("Scraped %d total results from all sources", len(all_results))
+    return all_results
+
+
+def filter_by_relevance(calls, research_angle, max_results=10):
+    """Use Ollama to filter and rank scraped calls by relevance to research angle."""
+    if not calls:
+        return []
+
+    # Deduplicate by title
+    seen = set()
+    unique = []
+    for c in calls:
+        key = c["title"].lower().strip()
+        if key not in seen:
+            seen.add(key)
+            unique.append(c)
+
+    # Build a numbered list for Ollama to evaluate
+    numbered = "\n".join(
+        f"{i+1}. [{c['source']}] {c['title']} — {c.get('description', '')[:100]}"
+        for i, c in enumerate(unique[:30])
+    )
+
+    prompt = f"""Research angle: "{research_angle}"
+
+Below is a list of academic conferences, calls for papers, grants, and fellowships scraped from real websites. Select the ones most relevant to the research angle above (architecture, housing, urban studies, adaptive reuse, postwar buildings, heritage).
+
+Return ONLY the numbers of the relevant items as a JSON object: {{"relevant": [1, 5, 7]}}
+
+If none are relevant, return: {{"relevant": []}}
+
+Items:
+{numbered}"""
+
+    raw = ollama_generate(prompt, as_json=True)
+    parsed = parse_json_response(raw)
+
+    if parsed and isinstance(parsed, dict) and "relevant" in parsed:
+        indices = parsed["relevant"]
+        filtered = []
+        for idx in indices:
+            if isinstance(idx, int) and 1 <= idx <= len(unique):
+                filtered.append(unique[idx - 1])
+        return filtered[:max_results]
+
+    # Fallback: return all unique results if Ollama can't filter
+    return unique[:max_results]
+
+
+# ---------------------------------------------------------------------------
 # Scheduled jobs
 # ---------------------------------------------------------------------------
 
 def job_scan_open_calls():
-    """Nightly 02:00 — generate relevant open calls."""
+    """Nightly 02:00 — scrape real open calls and filter by relevance."""
     log.info("Running scheduled open-calls scan")
     with app.app_context():
         db = get_db()
         angle = db.execute("SELECT value FROM profile WHERE key='research_angle'").fetchone()
         if not angle:
             return
-        prompt = f"""Based on this research angle:
-\"{angle['value']}\"
 
-Generate 3 relevant current opportunities (conferences, calls for papers, grants, or fellowships) for a PhD candidate in architecture/urban studies. For each, provide:
-- title
-- type (conference / cfp / grant / fellowship)
-- short description (1-2 sentences)
-- approximate deadline (YYYY-MM-DD)
-- a plausible URL or "N/A"
-
-Return valid JSON: {{"items": [{{"title":"...","type":"...","description":"...","deadline":"...","url":"..."}}]}}"""
-
-        raw = ollama_generate(prompt, as_json=True)
-        calls = parse_json_response(raw, expect_list=True)
-        if not calls:
-            log.warning("Could not parse open-calls JSON from Ollama: %s", raw[:200])
+        scraped = scrape_all_sources()
+        if not scraped:
+            log.warning("No results scraped from any source")
             return
 
+        calls = filter_by_relevance(scraped, angle["value"])
         for c in calls:
-            db.execute("INSERT INTO open_calls (title, type, description, deadline, url) VALUES (?,?,?,?,?)",
-                       (c.get("title", ""), c.get("type", ""), c.get("description", ""),
-                        c.get("deadline", ""), c.get("url", "")))
+            db.execute(
+                "INSERT INTO open_calls (title, type, description, deadline, url, source) VALUES (?,?,?,?,?,?)",
+                (c.get("title", ""), c.get("type", ""), c.get("description", ""),
+                 c.get("deadline", ""), c.get("url", ""), c.get("source", "scraped")))
         db.commit()
-        log.info("Added %d open calls", len(calls))
+        log.info("Added %d relevant open calls from scraping", len(calls))
 
 
 def job_generate_drafts():
@@ -454,27 +635,20 @@ def generate_open_calls():
     if not angle:
         return jsonify(error="No research angle set"), 400
 
-    prompt = f"""Based on this research angle:
-\"{angle['value']}\"
+    scraped = scrape_all_sources()
+    if not scraped:
+        return jsonify(error="Could not reach any source. Check your internet connection."), 500
 
-Generate 5 relevant current opportunities (conferences, calls for papers, grants, or fellowships) for a PhD candidate in architecture/urban studies. For each, provide:
-- title
-- type (conference / cfp / grant / fellowship)
-- short description (1-2 sentences)
-- approximate deadline (YYYY-MM-DD)
-- a plausible URL or "N/A"
-
-Return valid JSON: {{"items": [{{"title":"...","type":"...","description":"...","deadline":"...","url":"..."}}]}}"""
-
-    raw = ollama_generate(prompt, as_json=True)
-    calls = parse_json_response(raw, expect_list=True)
+    calls = filter_by_relevance(scraped, angle["value"])
     if not calls:
-        return jsonify(error="Could not parse AI response"), 500
+        # If filtering returns nothing, keep the top scraped results
+        calls = scraped[:5]
 
     for c in calls:
-        db.execute("INSERT INTO open_calls (title, type, description, deadline, url) VALUES (?,?,?,?,?)",
-                   (c.get("title", ""), c.get("type", ""), c.get("description", ""),
-                    c.get("deadline", ""), c.get("url", "")))
+        db.execute(
+            "INSERT INTO open_calls (title, type, description, deadline, url, source) VALUES (?,?,?,?,?,?)",
+            (c.get("title", ""), c.get("type", ""), c.get("description", ""),
+             c.get("deadline", ""), c.get("url", ""), c.get("source", "scraped")))
     db.commit()
     return jsonify(ok=True, count=len(calls))
 
