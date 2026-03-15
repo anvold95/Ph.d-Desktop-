@@ -12,7 +12,19 @@
     </div>
 </div>
 
-<p class="text-xs text-muted mb-2">Scraped from e-flux, Archinect, FindAPhD, WikiCFP, EURAXESS, jobs.ac.uk — sorted by relevance to your research angle.</p>
+<p class="text-xs text-muted mb-2">Scraped from 10 sources — sorted by relevance to your research angle.</p>
+
+<!-- Keyword Search -->
+<div class="card p-3 mb-4">
+    <div class="flex items-center gap-2">
+        <input type="text" id="kw-input" placeholder="Search specific keywords (comma-separated, e.g. 'adaptive reuse, postwar housing')" class="flex-1">
+        <button onclick="keywordSearch()" id="kw-btn" class="btn-primary">
+            <span id="kw-text">Search</span>
+            <span id="kw-spin" class="spinner hidden ml-2"></span>
+        </button>
+    </div>
+    <p class="text-[10px] text-muted mt-1">Searches FindAPhD, WikiCFP, EURAXESS, e-flux, ScholarshipDB, CORDIS for your keywords</p>
+</div>
 
 <!-- Filters -->
 <div class="flex gap-2 mb-4">
@@ -118,6 +130,33 @@ async function clearLow() {
     toast('Cleared low-relevance items');
     location.reload();
 }
+
+async function keywordSearch() {
+    const input = document.getElementById('kw-input');
+    const keywords = input.value.trim();
+    if (!keywords) { toast('Enter some keywords first'); return; }
+    const btn = document.getElementById('kw-btn');
+    const text = document.getElementById('kw-text');
+    const spin = document.getElementById('kw-spin');
+    btn.disabled = true;
+    text.textContent = 'Searching...';
+    spin.classList.remove('hidden');
+    const res = await api('/api/open-calls/search', { method: 'POST', body: { keywords } });
+    if (res.ok) {
+        toast(`Found ${res.count} new results (${res.total_found} total matches)`);
+        location.reload();
+    } else {
+        toast(res.error || 'Search failed');
+    }
+    btn.disabled = false;
+    text.textContent = 'Search';
+    spin.classList.add('hidden');
+}
+
+// Allow Enter key in search
+document.getElementById('kw-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') keywordSearch();
+});
 
 function filterCalls(cat) {
     document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active-filter'));

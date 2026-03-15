@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Pitch Targets — PhD Command Center{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+    <div>
+        <h2 class="text-lg font-semibold">Pitch Targets</h2>
+        <p class="text-xs text-muted mt-1">Magazines and journals you can pitch to — even without an open call. Save the ones that fit your research.</p>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="flex gap-2 mb-4">
+    <button onclick="filterTargets('all')" class="btn-outline filter-btn active-filter" data-f="all">All</button>
+    <button onclick="filterTargets('saved')" class="btn-outline filter-btn" data-f="saved">Saved</button>
+    <button onclick="filterTargets('magazine')" class="btn-outline filter-btn" data-f="magazine">Magazines</button>
+    <button onclick="filterTargets('journal')" class="btn-outline filter-btn" data-f="journal">Journals</button>
+</div>
+
+{% if targets %}
+<div class="space-y-2" id="targets-list">
+    {% for t in targets %}
+    <div class="card p-4 target-row {% if t['saved'] %}border-l-2 border-accent{% endif %}"
+         data-type="{{ t['type'] }}" data-saved="{{ t['saved'] }}">
+        <div class="flex items-start justify-between">
+            <div class="flex-1">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="text-sm font-medium">{{ t['name'] }}</span>
+                    <span class="badge badge-{{ 'pending' if t['type'] == 'magazine' else 'approved' }}">{{ t['type'] }}</span>
+                </div>
+                <p class="text-xs text-muted mb-2">{{ t['description'] }}</p>
+                {% if t['url'] %}
+                <a href="{{ t['url'] }}" target="_blank" class="text-xs text-accent hover:underline">Visit site</a>
+                {% endif %}
+            </div>
+            <div class="flex items-center gap-2 ml-3 flex-shrink-0">
+                <button onclick="suggestPitch({{ t['id'] }}, this)" class="btn-outline text-xs">Suggest pitch</button>
+                <button onclick="toggleSaveTarget({{ t['id'] }})" class="text-xs {% if t['saved'] %}text-accent font-semibold{% else %}text-muted{% endif %} hover:text-accent">
+                    {% if t['saved'] %}&#9733; Saved{% else %}&#9734; Save{% endif %}
+                </button>
+            </div>
+        </div>
+        <div id="pitch-{{ t['id'] }}" class="hidden mt-3 p-3 bg-blue-50 rounded text-sm"></div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card p-12 text-center">
+    <p class="text-sm text-muted">No pitch targets loaded yet. Refresh the page to seed the list.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<style>
+.active-filter { background: #eff6ff !important; color: #2563eb !important; border-color: #2563eb !important; }
+</style>
+<script>
+async function toggleSaveTarget(id) {
+    await api(`/api/pitch-targets/${id}/save`, { method: 'POST' });
+    location.reload();
+}
+
+async function suggestPitch(id, btn) {
+    const pitchDiv = document.getElementById(`pitch-${id}`);
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    const res = await api('/api/pitch-targets/suggest', { method: 'POST', body: { target_id: id } });
+    if (res.ok) {
+        pitchDiv.innerHTML = `<strong>${res.title}</strong><br><br>${res.pitch.replace(/\n/g, '<br>')}`;
+        pitchDiv.classList.remove('hidden');
+        toast('Pitch generated!');
+    } else {
+        toast(res.error || 'Failed to generate pitch');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Suggest pitch';
+}
+
+function filterTargets(f) {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active-filter'));
+    document.querySelector(`[data-f="${f}"]`).classList.add('active-filter');
+    document.querySelectorAll('.target-row').forEach(row => {
+        if (f === 'all') { row.style.display = ''; return; }
+        if (f === 'saved') { row.style.display = row.dataset.saved === '1' ? '' : 'none'; return; }
+        row.style.display = row.dataset.type === f ? '' : 'none';
+    });
+}
+</script>
+{% endblock %}

@@ -4,6 +4,7 @@
 <div class="flex items-center justify-between mb-6">
     <h2 class="text-lg font-semibold">Inbox</h2>
     <div class="flex gap-2">
+        <button onclick="showWriteModal()" class="btn-primary">Write your own</button>
         <button onclick="generateDraft('substack')" class="btn-outline">+ Substack</button>
         <button onclick="generateDraft('linkedin')" class="btn-outline">+ LinkedIn</button>
         <button onclick="generateDraft('outreach')" class="btn-outline">+ Outreach</button>
@@ -28,10 +29,11 @@
             <span class="text-sm font-medium">{{ item['title'] }}</span>
             <span class="text-xs text-muted ml-auto">{{ item['created'][:10] }}</span>
         </div>
-        <div class="text-sm leading-relaxed whitespace-pre-line mb-4 text-neutral-600">{{ item['body'] }}</div>
+        <div class="text-sm leading-relaxed whitespace-pre-line mb-4 text-neutral-600" id="body-{{ item['id'] }}">{{ item['body'] }}</div>
         <div class="flex gap-2">
             <button onclick="inboxAction({{ item['id'] }}, 'approve')" class="btn-primary">Approve</button>
             <button onclick="inboxAction({{ item['id'] }}, 'reject')" class="btn-outline">Reject</button>
+            <button onclick="showEditModal({{ item['id'] }}, '{{ item['title']|e }}', `{{ item['body']|e }}`)" class="btn-outline">Edit</button>
             <button onclick="deleteInbox({{ item['id'] }})" class="btn-danger ml-auto">Delete</button>
         </div>
     </div>
@@ -58,13 +60,47 @@
 {% if not items %}
 <div class="card p-12 text-center">
     <p class="text-sm text-muted mb-2">Inbox is empty.</p>
-    <p class="text-xs text-muted">Generate drafts using the buttons above, or wait for the weekly scheduled generation.</p>
+    <p class="text-xs text-muted">Write your own draft or generate one using the buttons above.</p>
 </div>
 {% endif %}
+
+<!-- Write Modal -->
+<div id="write-modal" class="hidden fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+    <div class="bg-white rounded-lg shadow-lg w-full max-w-xl p-6">
+        <h3 class="text-sm font-semibold mb-3" id="modal-title-label">Write your own draft</h3>
+        <div class="space-y-3">
+            <div>
+                <label class="text-xs text-muted">Type</label>
+                <select id="write-type" class="w-full">
+                    <option value="substack">Substack</option>
+                    <option value="linkedin">LinkedIn</option>
+                    <option value="outreach">Outreach email</option>
+                    <option value="essay">Essay</option>
+                    <option value="abstract">Abstract</option>
+                    <option value="notes">Research notes</option>
+                </select>
+            </div>
+            <div>
+                <label class="text-xs text-muted">Title</label>
+                <input type="text" id="write-title" class="w-full" placeholder="Draft title">
+            </div>
+            <div>
+                <label class="text-xs text-muted">Body</label>
+                <textarea id="write-body" class="w-full h-48" placeholder="Write your text here..."></textarea>
+            </div>
+        </div>
+        <div class="flex gap-2 mt-4">
+            <button onclick="submitWriteModal()" class="btn-primary" id="modal-submit-btn">Save draft</button>
+            <button onclick="closeWriteModal()" class="btn-outline">Cancel</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+let editingId = null;
+
 async function generateDraft(type) {
     document.getElementById('loading').classList.remove('hidden');
     await api('/api/inbox/generate', { method: 'POST', body: { type } });
@@ -82,5 +118,51 @@ async function deleteInbox(id) {
     await api(`/api/inbox/${id}`, { method: 'DELETE' });
     location.reload();
 }
+
+function showWriteModal() {
+    editingId = null;
+    document.getElementById('modal-title-label').textContent = 'Write your own draft';
+    document.getElementById('modal-submit-btn').textContent = 'Save draft';
+    document.getElementById('write-type').value = 'substack';
+    document.getElementById('write-title').value = '';
+    document.getElementById('write-body').value = '';
+    document.getElementById('write-modal').classList.remove('hidden');
+}
+
+function showEditModal(id, title, body) {
+    editingId = id;
+    document.getElementById('modal-title-label').textContent = 'Edit draft';
+    document.getElementById('modal-submit-btn').textContent = 'Update draft';
+    document.getElementById('write-title').value = title;
+    document.getElementById('write-body').value = body;
+    document.getElementById('write-modal').classList.remove('hidden');
+}
+
+function closeWriteModal() {
+    document.getElementById('write-modal').classList.add('hidden');
+    editingId = null;
+}
+
+async function submitWriteModal() {
+    const type = document.getElementById('write-type').value;
+    const title = document.getElementById('write-title').value;
+    const body = document.getElementById('write-body').value;
+    if (!body.trim()) { toast('Write something first'); return; }
+
+    if (editingId) {
+        await api(`/api/inbox/${editingId}/edit`, { method: 'PUT', body: { title, body } });
+        toast('Draft updated');
+    } else {
+        await api('/api/inbox/write', { method: 'POST', body: { type, title, body } });
+        toast('Draft saved!');
+    }
+    closeWriteModal();
+    location.reload();
+}
+
+// Close modal on backdrop click
+document.getElementById('write-modal').addEventListener('click', e => {
+    if (e.target === e.currentTarget) closeWriteModal();
+});
 </script>
 {% endblock %}

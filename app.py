@@ -139,6 +139,34 @@ def init_db():
         content   TEXT NOT NULL,
         created   TEXT DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS xp_log (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        action  TEXT NOT NULL,
+        xp      INTEGER NOT NULL,
+        detail  TEXT DEFAULT '',
+        created TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS achievements (
+        id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        key     TEXT UNIQUE NOT NULL,
+        title   TEXT NOT NULL,
+        description TEXT,
+        xp_bonus INTEGER DEFAULT 0,
+        unlocked TEXT DEFAULT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS pitch_targets (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        name        TEXT NOT NULL,
+        type        TEXT DEFAULT 'magazine',
+        url         TEXT,
+        description TEXT,
+        suggested   INTEGER DEFAULT 0,
+        saved       INTEGER DEFAULT 0,
+        created     TEXT DEFAULT (datetime('now'))
+    );
     """)
 
     # Add columns to existing tables if missing
@@ -292,6 +320,217 @@ Tasks:
 Voice profile: {voice_text}
 
 Always respond in English. Be precise and actionable. Focus on architecture, housing, urban studies, and adaptive reuse."""
+
+
+# ---------------------------------------------------------------------------
+# Gamification — XP, levels, achievements
+# ---------------------------------------------------------------------------
+
+ACHIEVEMENT_DEFS = [
+    ("first_program", "First Steps", "Add your first PhD program", 50),
+    ("five_programs", "Building a Shortlist", "Track 5 programs", 100),
+    ("first_task_done", "Getting Things Done", "Complete your first task", 30),
+    ("ten_tasks_done", "Productivity Machine", "Complete 10 tasks", 150),
+    ("first_voice_sample", "Finding Your Voice", "Submit a writing sample for voice training", 50),
+    ("three_voice_samples", "Voice Master", "Submit 3 writing samples", 100),
+    ("first_draft", "Draft Day", "Generate your first AI draft", 30),
+    ("first_outreach", "Reaching Out", "Generate an outreach email", 50),
+    ("five_drafts_approved", "Editor in Chief", "Approve 5 drafts", 150),
+    ("first_scan", "Scout", "Run your first open calls scan", 30),
+    ("first_save", "Bookmark Keeper", "Save an open call", 20),
+    ("ten_saves", "Opportunity Collector", "Save 10 open calls", 100),
+    ("first_keyword_search", "Keyword Hunter", "Run a custom keyword search", 30),
+    ("first_pitch", "Pitch Perfect", "Save a magazine pitch target", 50),
+    ("first_own_draft", "Original Writer", "Write your own draft in the inbox", 50),
+    ("streak_3", "On a Roll", "Use the app 3 days in a row", 75),
+    ("streak_7", "Week Warrior", "Use the app 7 days in a row", 200),
+    ("streak_14", "Unstoppable", "Use the app 14 days in a row", 500),
+    ("level_5", "Rising Scholar", "Reach level 5", 100),
+    ("level_10", "PhD Ready", "Reach level 10", 250),
+]
+
+XP_PER_LEVEL = 200  # XP needed per level (level = total_xp // 200)
+
+XP_ACTIONS = {
+    "add_program": 20,
+    "complete_task": 15,
+    "submit_voice": 25,
+    "generate_draft": 10,
+    "approve_draft": 10,
+    "scan_calls": 15,
+    "save_call": 5,
+    "keyword_search": 10,
+    "save_pitch": 10,
+    "write_own_draft": 30,
+    "daily_login": 10,
+    "checklist_item": 5,
+}
+
+
+def _seed_achievements(db):
+    """Seed achievement definitions if not present."""
+    for key, title, desc, bonus in ACHIEVEMENT_DEFS:
+        db.execute(
+            "INSERT OR IGNORE INTO achievements (key, title, description, xp_bonus) VALUES (?,?,?,?)",
+            (key, title, desc, bonus))
+    db.commit()
+
+
+def award_xp(db, action, detail=""):
+    """Award XP for an action. Returns (xp_gained, new_total, achievements_unlocked)."""
+    xp = XP_ACTIONS.get(action, 0)
+    if xp <= 0:
+        return 0, 0, []
+    db.execute("INSERT INTO xp_log (action, xp, detail) VALUES (?,?,?)", (action, xp, detail))
+
+    # Track daily login streak
+    today = datetime.now().strftime("%Y-%m-%d")
+    existing_today = db.execute(
+        "SELECT 1 FROM xp_log WHERE action='daily_login' AND date(created)=?", (today,)).fetchone()
+    if not existing_today and action != "daily_login":
+        db.execute("INSERT INTO xp_log (action, xp, detail) VALUES ('daily_login', ?, 'auto')",
+                   (XP_ACTIONS["daily_login"],))
+
+    total_xp = db.execute("SELECT COALESCE(SUM(xp),0) FROM xp_log").fetchone()[0]
+    unlocked = _check_achievements(db, total_xp)
+    # Add bonus XP from newly unlocked achievements
+    for ach in unlocked:
+        db.execute("INSERT INTO xp_log (action, xp, detail) VALUES ('achievement',?,?)",
+                   (ach["xp_bonus"], ach["title"]))
+    db.commit()
+    total_xp = db.execute("SELECT COALESCE(SUM(xp),0) FROM xp_log").fetchone()[0]
+    return xp, total_xp, unlocked
+
+
+def _check_achievements(db, total_xp):
+    """Check and unlock achievements based on current state. Returns list of newly unlocked."""
+    unlocked = []
+
+    def _try_unlock(key):
+        row = db.execute("SELECT unlocked FROM achievements WHERE key=?", (key,)).fetchone()
+        if row and not row["unlocked"]:
+            db.execute("UPDATE achievements SET unlocked=datetime('now') WHERE key=?", (key,))
+            ach = db.execute("SELECT * FROM achievements WHERE key=?", (key,)).fetchone()
+            unlocked.append(dict(ach))
+
+    # Program achievements
+    prog_count = db.execute("SELECT COUNT(*) FROM programs").fetchone()[0]
+    if prog_count >= 1:
+        _try_unlock("first_program")
+    if prog_count >= 5:
+        _try_unlock("five_programs")
+
+    # Task achievements
+    done_count = db.execute("SELECT COUNT(*) FROM tasks WHERE done=1").fetchone()[0]
+    if done_count >= 1:
+        _try_unlock("first_task_done")
+    if done_count >= 10:
+        _try_unlock("ten_tasks_done")
+
+    # Voice achievements
+    voice_count = db.execute("SELECT COUNT(*) FROM voice_samples").fetchone()[0]
+    if voice_count >= 1:
+        _try_unlock("first_voice_sample")
+    if voice_count >= 3:
+        _try_unlock("three_voice_samples")
+
+    # Draft achievements
+    draft_count = db.execute("SELECT COUNT(*) FROM inbox").fetchone()[0]
+    if draft_count >= 1:
+        _try_unlock("first_draft")
+    outreach = db.execute("SELECT 1 FROM inbox WHERE type='outreach'").fetchone()
+    if outreach:
+        _try_unlock("first_outreach")
+    approved_count = db.execute("SELECT COUNT(*) FROM inbox WHERE status='approved'").fetchone()[0]
+    if approved_count >= 5:
+        _try_unlock("five_drafts_approved")
+
+    # Open calls achievements
+    scan_count = db.execute("SELECT COUNT(*) FROM xp_log WHERE action='scan_calls'").fetchone()[0]
+    if scan_count >= 1:
+        _try_unlock("first_scan")
+    saved_count = db.execute("SELECT COUNT(*) FROM open_calls WHERE saved=1").fetchone()[0]
+    if saved_count >= 1:
+        _try_unlock("first_save")
+    if saved_count >= 10:
+        _try_unlock("ten_saves")
+
+    # Keyword search
+    kw_count = db.execute("SELECT COUNT(*) FROM xp_log WHERE action='keyword_search'").fetchone()[0]
+    if kw_count >= 1:
+        _try_unlock("first_keyword_search")
+
+    # Pitch targets
+    pitch_saved = db.execute("SELECT COUNT(*) FROM pitch_targets WHERE saved=1").fetchone()[0]
+    if pitch_saved >= 1:
+        _try_unlock("first_pitch")
+
+    # Own draft
+    own_count = db.execute("SELECT COUNT(*) FROM xp_log WHERE action='write_own_draft'").fetchone()[0]
+    if own_count >= 1:
+        _try_unlock("first_own_draft")
+
+    # Streak achievements
+    streak = _get_streak(db)
+    if streak >= 3:
+        _try_unlock("streak_3")
+    if streak >= 7:
+        _try_unlock("streak_7")
+    if streak >= 14:
+        _try_unlock("streak_14")
+
+    # Level achievements
+    level = total_xp // XP_PER_LEVEL
+    if level >= 5:
+        _try_unlock("level_5")
+    if level >= 10:
+        _try_unlock("level_10")
+
+    return unlocked
+
+
+def _get_streak(db):
+    """Calculate current daily streak from xp_log."""
+    rows = db.execute(
+        "SELECT DISTINCT date(created) as d FROM xp_log ORDER BY d DESC").fetchall()
+    if not rows:
+        return 0
+    streak = 0
+    today = datetime.now().date()
+    for row in rows:
+        expected = today - timedelta(days=streak)
+        try:
+            d = datetime.strptime(row["d"], "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            break
+        if d == expected:
+            streak += 1
+        else:
+            break
+    return streak
+
+
+def get_gamification_stats(db):
+    """Get all gamification data for display."""
+    total_xp = db.execute("SELECT COALESCE(SUM(xp),0) FROM xp_log").fetchone()[0]
+    level = total_xp // XP_PER_LEVEL
+    xp_in_level = total_xp % XP_PER_LEVEL
+    streak = _get_streak(db)
+    all_achievements = db.execute("SELECT * FROM achievements ORDER BY unlocked IS NULL, unlocked DESC").fetchall()
+    unlocked_count = sum(1 for a in all_achievements if a["unlocked"])
+    recent_xp = db.execute(
+        "SELECT action, xp, detail, created FROM xp_log ORDER BY created DESC LIMIT 10").fetchall()
+    return {
+        "total_xp": total_xp,
+        "level": level,
+        "xp_in_level": xp_in_level,
+        "xp_per_level": XP_PER_LEVEL,
+        "streak": streak,
+        "achievements": [dict(a) for a in all_achievements],
+        "unlocked_count": unlocked_count,
+        "total_achievements": len(all_achievements),
+        "recent_xp": [dict(r) for r in recent_xp],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -900,6 +1139,8 @@ def dashboard():
     if not query_db("SELECT 1 FROM open_calls LIMIT 1"):
         next_actions.append({"text": "Scan for open calls & opportunities", "url": "/open-calls"})
 
+    gstats = get_gamification_stats(db)
+
     return render_template("dashboard.html",
                            angle=angle["value"] if angle else "",
                            programs=programs,
@@ -911,7 +1152,8 @@ def dashboard():
                            open_calls_count=open_calls_count,
                            saved_calls=saved_calls,
                            days_left=days_left,
-                           next_actions=next_actions)
+                           next_actions=next_actions,
+                           g=gstats)
 
 
 @app.route("/api/profile", methods=["POST"])
@@ -952,8 +1194,9 @@ def create_program():
         (d["name"], d.get("country", ""), d.get("deadline", ""),
          d.get("status", "researching"), d.get("fit_score", 0),
          d.get("notes", ""), d.get("supervisor", ""), default_checklist))
+    xp, total, achievements = award_xp(db, "add_program", d["name"])
     db.commit()
-    return jsonify(ok=True)
+    return jsonify(ok=True, xp=xp, achievements=[a["title"] for a in achievements])
 
 
 @app.route("/api/programs/<int:pid>", methods=["PUT"])
@@ -974,6 +1217,7 @@ def update_checklist(pid):
     d = request.json
     db = get_db()
     db.execute("UPDATE programs SET checklist=? WHERE id=?", (json.dumps(d.get("checklist", {})), pid))
+    award_xp(db, "checklist_item")
     db.commit()
     return jsonify(ok=True)
 
@@ -1021,7 +1265,10 @@ def update_task(tid):
 @app.route("/api/tasks/<int:tid>/toggle", methods=["POST"])
 def toggle_task(tid):
     db = get_db()
+    task = db.execute("SELECT done FROM tasks WHERE id=?", (tid,)).fetchone()
     db.execute("UPDATE tasks SET done = NOT done WHERE id=?", (tid,))
+    if task and not task["done"]:  # Was undone, now completing
+        xp, total, achievements = award_xp(db, "complete_task")
     db.commit()
     return jsonify(ok=True)
 
@@ -1064,6 +1311,7 @@ def generate_open_calls():
              c["description"], c["deadline"], c["url"],
              c["source"], c.get("relevance_score", 0)))
         added += 1
+    award_xp(db, "scan_calls")
     db.commit()
     return jsonify(ok=True, count=added)
 
@@ -1071,7 +1319,10 @@ def generate_open_calls():
 @app.route("/api/open-calls/<int:cid>/save", methods=["POST"])
 def save_open_call(cid):
     db = get_db()
+    call = db.execute("SELECT saved FROM open_calls WHERE id=?", (cid,)).fetchone()
     db.execute("UPDATE open_calls SET saved = NOT saved WHERE id=?", (cid,))
+    if call and not call["saved"]:  # Was unsaved, now saving
+        award_xp(db, "save_call")
     db.commit()
     return jsonify(ok=True)
 
@@ -1090,6 +1341,185 @@ def clear_low_relevance():
     db.execute("DELETE FROM open_calls WHERE relevance_score < 10 AND saved = 0")
     db.commit()
     return jsonify(ok=True)
+
+
+@app.route("/api/open-calls/search", methods=["POST"])
+def keyword_search_calls():
+    """Custom keyword search across all scraper sources."""
+    d = request.json
+    keywords = d.get("keywords", "").strip()
+    if not keywords:
+        return jsonify(error="No keywords provided"), 400
+
+    db = get_db()
+    # Build search queries from user keywords
+    terms = [kw.strip().replace(" ", "+") for kw in keywords.split(",") if kw.strip()]
+    all_results = []
+
+    for term in terms[:5]:  # Max 5 keyword groups
+        for base_url, source, rtype in [
+            ("https://www.findaphd.com/phds/?Keywords={}", "FindAPhD", "phd"),
+            ("http://www.wikicfp.com/cfp/servlet/tool.search?q={}&year=f", "WikiCFP", "cfp"),
+            ("https://euraxess.ec.europa.eu/jobs/search?keywords={}", "EURAXESS", "fellowship"),
+            ("https://www.e-flux.com/announcements/?search={}", "e-flux", "cfp"),
+            ("https://www.scholarshipdb.net/scholarships?q={}", "ScholarshipDB", "phd"),
+            ("https://cordis.europa.eu/search?q={}&type=project", "CORDIS", "eu_project"),
+        ]:
+            r = _get(base_url.format(term))
+            if not r:
+                continue
+            soup = BeautifulSoup(r.text, "html.parser")
+            items = soup.select("article, .resultsRow, .phd-result, [class*='Result'], [class*='card'], .views-row, .item, tr")
+            for item in items[:15]:
+                title_el = item.find(["h2", "h3", "h4", "a"])
+                if not title_el:
+                    continue
+                title = _clean_text(title_el.get_text())
+                if not title or len(title) < 5:
+                    continue
+                a_tag = item.find("a", href=True)
+                link = a_tag["href"] if a_tag else ""
+                if link and not link.startswith("http"):
+                    link = r.url.split("/")[0] + "//" + r.url.split("/")[2] + link
+                desc_el = item.find("p")
+                desc = _clean_text(desc_el.get_text()[:200]) if desc_el else ""
+                if not _is_junk(title, desc):
+                    score, cats = _score_relevance(title, desc)
+                    # Boost score for keyword match
+                    for kw in keywords.lower().split(","):
+                        kw = kw.strip()
+                        if kw and (kw in title.lower() or kw in desc.lower()):
+                            score = min(100, score + 15)
+                    all_results.append({
+                        "title": title[:150], "type": rtype,
+                        "description": desc, "deadline": "",
+                        "url": link, "source": source,
+                        "relevance_score": score, "category": ", ".join(cats),
+                    })
+
+    # Deduplicate
+    seen = set()
+    unique = []
+    for c in all_results:
+        key = re.sub(r'\s+', ' ', c["title"].lower().strip())
+        if key not in seen and len(key) > 4:
+            seen.add(key)
+            unique.append(c)
+    unique.sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+
+    # Store in DB
+    added = 0
+    for c in unique[:40]:
+        existing = db.execute("SELECT 1 FROM open_calls WHERE title=? AND source=?",
+                              (c["title"], c["source"])).fetchone()
+        if existing:
+            continue
+        db.execute(
+            "INSERT INTO open_calls (title, type, category, description, deadline, url, source, relevance_score) VALUES (?,?,?,?,?,?,?,?)",
+            (c["title"], c["type"], c.get("category", ""),
+             c["description"], c["deadline"], c["url"],
+             c["source"], c.get("relevance_score", 0)))
+        added += 1
+
+    award_xp(db, "keyword_search", keywords)
+    db.commit()
+    return jsonify(ok=True, count=added, total_found=len(unique))
+
+
+# ---------------------------------------------------------------------------
+# Routes — Pitch Targets (proactive magazine/journal suggestions)
+# ---------------------------------------------------------------------------
+
+PITCH_TARGETS_SEED = [
+    ("Architectural Review", "magazine", "https://www.architectural-review.com",
+     "Long-form essays on architecture, urbanism, and building culture. Accepts unsolicited pitches."),
+    ("Dezeen", "magazine", "https://www.dezeen.com",
+     "World's most popular architecture magazine. Opinion section accepts contributor pieces."),
+    ("Failed Architecture", "magazine", "https://failedarchitecture.com",
+     "Critical platform about architecture and urban planning. Open to contributor essays."),
+    ("The Funambulist", "magazine", "https://thefunambulist.net",
+     "Politics of space and bodies. Publishes essays on spatial justice, housing, and urbanism."),
+    ("Volume Magazine", "magazine", "https://volumeproject.org",
+     "Architecture magazine focusing on spatial practice beyond buildings."),
+    ("e-flux Architecture", "magazine", "https://www.e-flux.com/architecture/",
+     "Critical essays on architecture theory and practice. Invitation + pitch."),
+    ("PLOT Magazine", "magazine", "https://www.plotmag.com",
+     "Latin American architecture magazine. Open to international contributors."),
+    ("Metropolis", "magazine", "https://metropolismag.com",
+     "Design and architecture coverage. Accepts freelance pitches on housing and urban topics."),
+    ("Places Journal", "journal", "https://placesjournal.org",
+     "Public scholarship on architecture, landscape, and urbanism. Peer-reviewed, open to pitches."),
+    ("Journal of Architecture", "journal", "https://www.tandfonline.com/toc/rjar20/current",
+     "Academic journal. Publishes research on architectural history, theory, and design."),
+    ("Urban Studies", "journal", "https://journals.sagepub.com/home/usj",
+     "Interdisciplinary journal on urban policy, planning, and social aspects of cities."),
+    ("Housing Studies", "journal", "https://www.tandfonline.com/toc/chos20/current",
+     "Academic journal on housing policy, markets, and built environments."),
+    ("OASE Journal", "journal", "https://www.oasejournal.nl",
+     "Architectural journal from Netherlands. Thematic issues on architecture and urbanism."),
+    ("Conditions Magazine", "magazine", "https://conditionsmagazine.com",
+     "Architecture and spatial practice publication. Focus on Nordic context."),
+    ("Architect Sweden (Arkitektur)", "magazine", "https://arkitektur.se",
+     "Swedish architecture magazine. Relevant for Nordic housing research."),
+    ("Domus", "magazine", "https://www.domusweb.it",
+     "Italian architecture and design magazine with international reach. Accepts pitches."),
+    ("Log Journal", "journal", "https://www.anycorp.com/log",
+     "Critical journal of architecture. Theory-heavy, accepts unsolicited manuscripts."),
+    ("arq: Architectural Research Quarterly", "journal", "https://www.cambridge.org/core/journals/arq-architectural-research-quarterly",
+     "Cambridge University Press. Publishes architectural research including housing studies."),
+]
+
+
+@app.route("/pitch-targets")
+def pitch_targets_page():
+    db = get_db()
+    # Seed pitch targets if table is empty
+    existing = db.execute("SELECT COUNT(*) FROM pitch_targets").fetchone()[0]
+    if existing == 0:
+        for name, ptype, url, desc in PITCH_TARGETS_SEED:
+            db.execute("INSERT INTO pitch_targets (name, type, url, description) VALUES (?,?,?,?)",
+                       (name, ptype, url, desc))
+        db.commit()
+    targets = query_db("SELECT * FROM pitch_targets ORDER BY saved DESC, name")
+    return render_template("pitch_targets.html", targets=targets)
+
+
+@app.route("/api/pitch-targets/<int:pid>/save", methods=["POST"])
+def save_pitch_target(pid):
+    db = get_db()
+    db.execute("UPDATE pitch_targets SET saved = NOT saved WHERE id=?", (pid,))
+    award_xp(db, "save_pitch")
+    db.commit()
+    return jsonify(ok=True)
+
+
+@app.route("/api/pitch-targets/suggest", methods=["POST"])
+def suggest_pitch():
+    """Use AI to suggest a pitch angle for a specific magazine/journal."""
+    d = request.json
+    target_id = d.get("target_id")
+    db = get_db()
+    target = db.execute("SELECT * FROM pitch_targets WHERE id=?", (target_id,)).fetchone()
+    if not target:
+        return jsonify(error="Target not found"), 404
+    ctx = build_system_context()
+    prompt = f"""Based on the research angle and voice profile above, suggest a specific article pitch for:
+
+Publication: {target['name']} ({target['type']})
+Description: {target['description']}
+URL: {target['url']}
+
+Write a concise pitch (150-200 words) that:
+1. Proposes a specific article title
+2. Explains the angle and why it fits this publication
+3. Connects to the PhD research on postwar housing transformation
+
+Return JSON: {{"title": "proposed article title", "pitch": "the pitch text"}}"""
+    raw = ollama_generate(prompt, system=ctx, as_json=True)
+    data = parse_json_response(raw)
+    if not data or not isinstance(data, dict):
+        data = {"title": "Pitch draft", "pitch": raw}
+    return jsonify(ok=True, title=data.get("title", ""), pitch=data.get("pitch", ""))
 
 
 # ---------------------------------------------------------------------------
@@ -1125,6 +1555,7 @@ def generate_inbox_draft():
         data = {"title": f"Draft {dtype}", "body": raw}
     db.execute("INSERT INTO inbox (type, title, body) VALUES (?,?,?)",
                (dtype, data.get("title", ""), data.get("body", "")))
+    award_xp(db, "generate_draft", dtype)
     db.commit()
     return jsonify(ok=True)
 
@@ -1136,6 +1567,37 @@ def inbox_action(iid, action):
     db = get_db()
     status = "approved" if action == "approve" else "rejected"
     db.execute("UPDATE inbox SET status=? WHERE id=?", (status, iid))
+    if action == "approve":
+        award_xp(db, "approve_draft")
+    db.commit()
+    return jsonify(ok=True)
+
+
+@app.route("/api/inbox/write", methods=["POST"])
+def write_own_draft():
+    """Let user write their own draft directly."""
+    d = request.json
+    dtype = d.get("type", "substack")
+    title = d.get("title", "").strip()
+    body = d.get("body", "").strip()
+    if not body:
+        return jsonify(error="Body cannot be empty"), 400
+    if not title:
+        title = f"My {dtype} draft"
+    db = get_db()
+    db.execute("INSERT INTO inbox (type, title, body) VALUES (?,?,?)", (dtype, title, body))
+    award_xp(db, "write_own_draft", title)
+    db.commit()
+    return jsonify(ok=True)
+
+
+@app.route("/api/inbox/<int:iid>/edit", methods=["PUT"])
+def edit_inbox_draft(iid):
+    """Let user edit an existing draft."""
+    d = request.json
+    db = get_db()
+    db.execute("UPDATE inbox SET title=?, body=? WHERE id=?",
+               (d.get("title", ""), d.get("body", ""), iid))
     db.commit()
     return jsonify(ok=True)
 
@@ -1192,6 +1654,7 @@ Synthesize into ONE concise voice profile (4-6 sentences) capturing consistent s
     else:
         merged = analysis
     db.execute("INSERT OR REPLACE INTO profile (key, value) VALUES ('voice_profile', ?)", (merged,))
+    award_xp(db, "submit_voice")
     db.commit()
     return jsonify(ok=True, analysis=analysis)
 
@@ -1234,6 +1697,12 @@ def chat_send():
     return jsonify(ok=True, reply=reply)
 
 
+@app.route("/api/gamification")
+def gamification_api():
+    db = get_db()
+    return jsonify(get_gamification_stats(db))
+
+
 @app.route("/api/chat/clear", methods=["POST"])
 def chat_clear():
     db = get_db()
@@ -1247,6 +1716,12 @@ def chat_clear():
 # ---------------------------------------------------------------------------
 
 init_db()
+
+# Seed achievement definitions
+_adb = sqlite3.connect(app.config["DATABASE"])
+_adb.row_factory = sqlite3.Row
+_seed_achievements(_adb)
+_adb.close()
 
 scheduler = BackgroundScheduler()
 scheduler.add_job(job_scan_open_calls, "cron", hour=2, minute=0, id="nightly_calls")
