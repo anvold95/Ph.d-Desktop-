@@ -9,7 +9,7 @@
     </button>
 </div>
 
-<p class="text-xs text-muted mb-4">Scraped from WikiCFP, ConferenceIndex, and EURAXESS — filtered by AI for relevance to your research angle.</p>
+<p class="text-xs text-muted mb-4">Scraped from e-flux, Archinect, FindAPhD, WikiCFP, EURAXESS, jobs.ac.uk, and AcademicPositions — filtered by AI for relevance.</p>
 
 {% if calls %}
 <div class="space-y-3">
@@ -61,7 +61,7 @@ async function generateCalls() {
     } else {
         toast(res.error || 'Generation failed');
         btn.disabled = false;
-        text.textContent = 'Generate with AI';
+        text.textContent = 'Scan sources';
         spin.classList.add('hidden');
     }
 }

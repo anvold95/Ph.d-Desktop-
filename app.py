@@ -249,176 +249,381 @@ Always respond in English. Be precise and actionable."""
 
 
 # ---------------------------------------------------------------------------
-# Web scraping — real open calls
+# Web scraping — real open calls from multiple sources
 # ---------------------------------------------------------------------------
 
 SCRAPE_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate",
+    "Connection": "keep-alive",
 }
 
-SEARCH_KEYWORDS = [
-    "architecture", "urban design", "housing", "adaptive reuse",
-    "urban studies", "built environment", "heritage",
-]
 
-
-def scrape_wikicfp(keywords=None):
-    """Scrape WikiCFP for architecture/urban-related CFPs."""
-    results = []
-    search_terms = keywords or ["architecture", "urban design", "housing"]
-    for term in search_terms[:3]:
-        try:
-            url = f"http://www.wikicfp.com/cfp/servlet/tool.search?q={term.replace(' ', '+')}&year=f"
-            r = requests.get(url, headers=SCRAPE_HEADERS, timeout=15)
-            if r.status_code != 200:
-                continue
-            soup = BeautifulSoup(r.text, "html.parser")
-            rows = soup.select("table.wikitable tr")
-            for row in rows:
-                cells = row.find_all("td")
-                if len(cells) >= 3:
-                    link_el = cells[0].find("a")
-                    if not link_el:
-                        continue
-                    title = link_el.get_text(strip=True)
-                    href = link_el.get("href", "")
-                    if href and not href.startswith("http"):
-                        href = f"http://www.wikicfp.com{href}"
-                    desc = cells[1].get_text(strip=True) if len(cells) > 1 else ""
-                    deadline = cells[2].get_text(strip=True) if len(cells) > 2 else ""
-                    if title:
-                        results.append({
-                            "title": title,
-                            "type": "cfp",
-                            "description": desc,
-                            "deadline": deadline,
-                            "url": href,
-                            "source": "WikiCFP",
-                        })
-        except Exception as e:
-            log.warning("WikiCFP scrape error for '%s': %s", term, e)
-    return results
-
-
-def scrape_conference_index(keywords=None):
-    """Scrape conferenceindex.org for relevant conferences."""
-    results = []
-    search_terms = keywords or ["architecture", "urban-design"]
-    for term in search_terms[:2]:
-        try:
-            url = f"https://conferenceindex.org/conferences/{term.replace(' ', '-')}"
-            r = requests.get(url, headers=SCRAPE_HEADERS, timeout=15)
-            if r.status_code != 200:
-                continue
-            soup = BeautifulSoup(r.text, "html.parser")
-            items = soup.select(".list-group-item, .conference-item, article, .card")
-            for item in items[:15]:
-                title_el = item.find(["h3", "h4", "h5", "a"])
-                if not title_el:
-                    continue
-                title = title_el.get_text(strip=True)
-                link = ""
-                a_tag = item.find("a", href=True)
-                if a_tag:
-                    link = a_tag["href"]
-                    if not link.startswith("http"):
-                        link = f"https://conferenceindex.org{link}"
-                desc_el = item.find("p")
-                desc = desc_el.get_text(strip=True) if desc_el else ""
-                date_el = item.find(class_=re.compile(r"date|time|deadline", re.I))
-                date_text = date_el.get_text(strip=True) if date_el else ""
-                if title and len(title) > 5:
-                    results.append({
-                        "title": title,
-                        "type": "conference",
-                        "description": desc[:200],
-                        "deadline": date_text,
-                        "url": link,
-                        "source": "ConferenceIndex",
-                    })
-        except Exception as e:
-            log.warning("ConferenceIndex scrape error for '%s': %s", term, e)
-    return results
-
-
-def scrape_euraxess():
-    """Scrape EURAXESS for PhD/research positions in architecture."""
-    results = []
+def _get(url, timeout=15):
+    """HTTP GET with browser headers. Returns response or None."""
     try:
-        url = "https://euraxess.ec.europa.eu/jobs/search/field_research_profile/first-stage-researcher-r1-702?keywords=architecture+housing"
-        r = requests.get(url, headers=SCRAPE_HEADERS, timeout=15)
-        if r.status_code != 200:
-            return results
+        r = requests.get(url, headers=SCRAPE_HEADERS, timeout=timeout, allow_redirects=True)
+        if r.status_code == 200:
+            return r
+        log.warning("HTTP %d for %s", r.status_code, url)
+    except Exception as e:
+        log.warning("Request failed for %s: %s", url, e)
+    return None
+
+
+# --- e-flux (architecture announcements, very relevant) ---
+
+def scrape_eflux():
+    """Scrape e-flux.com for architecture announcements and calls."""
+    results = []
+    for section in ["announcements", "architecture"]:
+        r = _get(f"https://www.e-flux.com/{section}/")
+        if not r:
+            continue
         soup = BeautifulSoup(r.text, "html.parser")
-        items = soup.select(".views-row, .node--type-job-offer, article")
+        # e-flux uses article tags or divs with class containing 'item'
+        items = soup.select("article, .announcement-item, .content-item, [class*='Item'], [class*='card']")
+        if not items:
+            items = soup.find_all("a", href=re.compile(r"/(announcements|architecture)/\d+"))
+        for item in items[:15]:
+            a_tag = item.find("a", href=True) if item.name != "a" else item
+            if not a_tag or not a_tag.get("href"):
+                continue
+            title_el = item.find(["h2", "h3", "h4"]) or a_tag
+            title = title_el.get_text(strip=True)
+            href = a_tag["href"]
+            if not href.startswith("http"):
+                href = f"https://www.e-flux.com{href}"
+            desc_el = item.find("p")
+            desc = desc_el.get_text(strip=True)[:200] if desc_el else ""
+            date_el = item.find(["time", "span"], class_=re.compile(r"date|time", re.I))
+            date_text = date_el.get_text(strip=True) if date_el else ""
+            if title and len(title) > 3 and title.lower() != "e-flux":
+                results.append({
+                    "title": title[:150],
+                    "type": "cfp",
+                    "description": desc,
+                    "deadline": date_text,
+                    "url": href,
+                    "source": "e-flux",
+                })
+    return results
+
+
+# --- Archinect (competitions & opportunities) ---
+
+def scrape_archinect():
+    """Scrape Archinect for competitions and opportunities."""
+    results = []
+    for path in ["/competitions", "/jobs/categories/academic"]:
+        r = _get(f"https://archinect.com{path}")
+        if not r:
+            continue
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select("article, .item, .listing-item, [class*='ListItem'], [class*='card']")
+        if not items:
+            items = soup.find_all("a", href=re.compile(r"/(competitions|jobs)/"))
+        for item in items[:15]:
+            a_tag = item.find("a", href=True) if item.name != "a" else item
+            if not a_tag or not a_tag.get("href"):
+                continue
+            title_el = item.find(["h2", "h3", "h4"]) or a_tag
+            title = title_el.get_text(strip=True)
+            href = a_tag["href"]
+            if not href.startswith("http"):
+                href = f"https://archinect.com{href}"
+            desc_el = item.find("p")
+            desc = desc_el.get_text(strip=True)[:200] if desc_el else ""
+            date_el = item.find(["time", "span"], class_=re.compile(r"date|deadline", re.I))
+            date_text = date_el.get_text(strip=True) if date_el else ""
+            if title and len(title) > 3:
+                results.append({
+                    "title": title[:150],
+                    "type": "competition" if "compet" in path else "job",
+                    "description": desc,
+                    "deadline": date_text,
+                    "url": href,
+                    "source": "Archinect",
+                })
+    return results
+
+
+# --- FindAPhD (PhD positions) ---
+
+def scrape_findaphd():
+    """Scrape FindAPhD for architecture/housing PhD positions."""
+    results = []
+    queries = [
+        "architecture+housing", "urban+design+heritage",
+        "adaptive+reuse+building", "postwar+housing",
+    ]
+    for q in queries:
+        r = _get(f"https://www.findaphd.com/phds/?Keywords={q}")
+        if not r:
+            continue
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select(".resultsRow, .phd-result, [class*='Result'], .card, article")
         for item in items[:10]:
-            title_el = item.find(["h2", "h3", "a"])
+            title_el = item.find(["h3", "h4", "a"])
             if not title_el:
                 continue
             title = title_el.get_text(strip=True)
             link = ""
-            a_tag = title_el if title_el.name == "a" else item.find("a", href=True)
-            if a_tag and a_tag.get("href"):
+            a_tag = item.find("a", href=True)
+            if a_tag:
                 link = a_tag["href"]
                 if not link.startswith("http"):
-                    link = f"https://euraxess.ec.europa.eu{link}"
-            desc_el = item.find(class_=re.compile(r"field|body|summary", re.I))
+                    link = f"https://www.findaphd.com{link}"
+            desc_el = item.find("p", class_=re.compile(r"desc|snippet|summary", re.I))
+            if not desc_el:
+                desc_el = item.find("p")
             desc = desc_el.get_text(strip=True)[:200] if desc_el else ""
-            deadline_el = item.find(class_=re.compile(r"deadline|date", re.I))
+            deadline_el = item.find(class_=re.compile(r"deadline|date|closes", re.I))
             deadline = deadline_el.get_text(strip=True) if deadline_el else ""
             if title and len(title) > 5:
                 results.append({
-                    "title": title,
-                    "type": "fellowship",
+                    "title": title[:150],
+                    "type": "phd",
                     "description": desc,
                     "deadline": deadline,
                     "url": link,
-                    "source": "EURAXESS",
+                    "source": "FindAPhD",
                 })
-    except Exception as e:
-        log.warning("EURAXESS scrape error: %s", e)
+        if results:
+            break  # Got results, no need to try more queries
     return results
 
 
+# --- WikiCFP ---
+
+def scrape_wikicfp():
+    """Scrape WikiCFP for architecture/urban-related CFPs."""
+    results = []
+    for term in ["architecture", "urban+design", "heritage", "housing"]:
+        r = _get(f"http://www.wikicfp.com/cfp/servlet/tool.search?q={term}&year=f")
+        if not r:
+            continue
+        soup = BeautifulSoup(r.text, "html.parser")
+        # WikiCFP uses nested tables; CFP rows have colored backgrounds
+        for row in soup.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) < 2:
+                continue
+            link_el = cells[0].find("a")
+            if not link_el:
+                continue
+            title = link_el.get_text(strip=True)
+            if not title or len(title) < 3:
+                continue
+            href = link_el.get("href", "")
+            if href and not href.startswith("http"):
+                href = f"http://www.wikicfp.com{href}"
+            # Description is often in the next row or second cell
+            desc = cells[1].get_text(strip=True)[:200] if len(cells) > 1 else ""
+            deadline = ""
+            for cell in cells:
+                text = cell.get_text(strip=True)
+                if re.search(r"\d{4}-\d{2}-\d{2}|\w+ \d{1,2},? \d{4}", text):
+                    deadline = text
+                    break
+            results.append({
+                "title": title[:150],
+                "type": "cfp",
+                "description": desc,
+                "deadline": deadline,
+                "url": href,
+                "source": "WikiCFP",
+            })
+        if len(results) >= 10:
+            break
+    return results
+
+
+# --- EURAXESS (European research positions) ---
+
+def scrape_euraxess():
+    """Scrape EURAXESS for PhD/research positions in architecture."""
+    results = []
+    r = _get("https://euraxess.ec.europa.eu/jobs/search?keywords=architecture+housing+urban&research_profile=First+Stage+Researcher+%28R1%29")
+    if not r:
+        return results
+    soup = BeautifulSoup(r.text, "html.parser")
+    items = soup.select(".views-row, article, .node, [class*='job'], .card")
+    for item in items[:15]:
+        title_el = item.find(["h2", "h3", "h4", "a"])
+        if not title_el:
+            continue
+        title = title_el.get_text(strip=True)
+        link = ""
+        a_tag = title_el if title_el.name == "a" else item.find("a", href=True)
+        if a_tag and a_tag.get("href"):
+            link = a_tag["href"]
+            if not link.startswith("http"):
+                link = f"https://euraxess.ec.europa.eu{link}"
+        desc_el = item.find(class_=re.compile(r"field|body|summary|snippet", re.I))
+        desc = desc_el.get_text(strip=True)[:200] if desc_el else ""
+        deadline_el = item.find(class_=re.compile(r"deadline|date", re.I))
+        deadline = deadline_el.get_text(strip=True) if deadline_el else ""
+        if title and len(title) > 5:
+            results.append({
+                "title": title[:150],
+                "type": "fellowship",
+                "description": desc,
+                "deadline": deadline,
+                "url": link,
+                "source": "EURAXESS",
+            })
+    return results
+
+
+# --- jobs.ac.uk (UK academic jobs) ---
+
+def scrape_jobs_ac_uk():
+    """Scrape jobs.ac.uk for architecture PhD/research positions."""
+    results = []
+    r = _get("https://www.jobs.ac.uk/search/?keywords=architecture+housing+phd&activeFacet=hoursTypeFacet")
+    if not r:
+        return results
+    soup = BeautifulSoup(r.text, "html.parser")
+    items = soup.select(".job-result, .search-result, article, [class*='job'], .card")
+    for item in items[:10]:
+        title_el = item.find(["h3", "h4", "a"])
+        if not title_el:
+            continue
+        title = title_el.get_text(strip=True)
+        link = ""
+        a_tag = item.find("a", href=True)
+        if a_tag:
+            link = a_tag["href"]
+            if not link.startswith("http"):
+                link = f"https://www.jobs.ac.uk{link}"
+        desc_el = item.find("p")
+        desc = desc_el.get_text(strip=True)[:200] if desc_el else ""
+        deadline_el = item.find(class_=re.compile(r"deadline|closing|date", re.I))
+        deadline = deadline_el.get_text(strip=True) if deadline_el else ""
+        if title and len(title) > 5:
+            results.append({
+                "title": title[:150],
+                "type": "phd",
+                "description": desc,
+                "deadline": deadline,
+                "url": link,
+                "source": "jobs.ac.uk",
+            })
+    return results
+
+
+# --- Academic Positions ---
+
+def scrape_academic_positions():
+    """Scrape academicpositions.com for architecture research positions."""
+    results = []
+    r = _get("https://academicpositions.com/jobs?q=architecture+housing+urban")
+    if not r:
+        return results
+    soup = BeautifulSoup(r.text, "html.parser")
+    items = soup.select("article, .job-card, [class*='Card'], [class*='result'], .list-group-item")
+    for item in items[:10]:
+        title_el = item.find(["h2", "h3", "h4", "a"])
+        if not title_el:
+            continue
+        title = title_el.get_text(strip=True)
+        link = ""
+        a_tag = item.find("a", href=True)
+        if a_tag:
+            link = a_tag["href"]
+            if not link.startswith("http"):
+                link = f"https://academicpositions.com{link}"
+        desc_el = item.find("p")
+        desc = desc_el.get_text(strip=True)[:200] if desc_el else ""
+        if title and len(title) > 5:
+            results.append({
+                "title": title[:150],
+                "type": "job",
+                "description": desc,
+                "deadline": "",
+                "url": link,
+                "source": "AcademicPositions",
+            })
+    return results
+
+
+# --- Master scraper ---
+
 def scrape_all_sources():
-    """Scrape all sources and return combined results."""
+    """Scrape all sources in parallel-ish fashion, return combined results."""
     all_results = []
-    all_results.extend(scrape_wikicfp())
-    all_results.extend(scrape_conference_index())
-    all_results.extend(scrape_euraxess())
-    log.info("Scraped %d total results from all sources", len(all_results))
+    scrapers = [
+        ("e-flux", scrape_eflux),
+        ("Archinect", scrape_archinect),
+        ("FindAPhD", scrape_findaphd),
+        ("WikiCFP", scrape_wikicfp),
+        ("EURAXESS", scrape_euraxess),
+        ("jobs.ac.uk", scrape_jobs_ac_uk),
+        ("AcademicPositions", scrape_academic_positions),
+    ]
+    succeeded = 0
+    for name, fn in scrapers:
+        try:
+            items = fn()
+            all_results.extend(items)
+            if items:
+                succeeded += 1
+                log.info("  %s: %d results", name, len(items))
+            else:
+                log.info("  %s: 0 results", name)
+        except Exception as e:
+            log.warning("  %s: failed — %s", name, e)
+    log.info("Scraped %d total results from %d/%d sources",
+             len(all_results), succeeded, len(scrapers))
     return all_results
 
 
-def filter_by_relevance(calls, research_angle, max_results=10):
+def filter_by_relevance(calls, research_angle, max_results=15):
     """Use Ollama to filter and rank scraped calls by relevance to research angle."""
     if not calls:
         return []
 
-    # Deduplicate by title
+    # Deduplicate by normalized title
     seen = set()
     unique = []
     for c in calls:
-        key = c["title"].lower().strip()
-        if key not in seen:
+        key = re.sub(r'\s+', ' ', c["title"].lower().strip())
+        if key not in seen and len(key) > 3:
             seen.add(key)
             unique.append(c)
 
+    if not unique:
+        return []
+
+    # If few results, skip filtering
+    if len(unique) <= 5:
+        return unique
+
     # Build a numbered list for Ollama to evaluate
     numbered = "\n".join(
-        f"{i+1}. [{c['source']}] {c['title']} — {c.get('description', '')[:100]}"
-        for i, c in enumerate(unique[:30])
+        f"{i+1}. [{c['source']}] {c['title']} — {c.get('description', '')[:80]}"
+        for i, c in enumerate(unique[:40])
     )
 
     prompt = f"""Research angle: "{research_angle}"
 
-Below is a list of academic conferences, calls for papers, grants, and fellowships scraped from real websites. Select the ones most relevant to the research angle above (architecture, housing, urban studies, adaptive reuse, postwar buildings, heritage).
+The user is a PhD candidate in architecture, focusing on postwar housing, adaptive reuse, and urban transformation.
 
-Return ONLY the numbers of the relevant items as a JSON object: {{"relevant": [1, 5, 7]}}
+Below are items scraped from academic websites. Select ALL items relevant to:
+- Architecture (broadly)
+- Housing, urban design, urban studies
+- Heritage, preservation, adaptive reuse
+- Postwar built environment
+- Architectural theory and history
+- Related PhD positions, grants, or fellowships
 
-If none are relevant, return: {{"relevant": []}}
+Be generous — if it's even loosely related to architecture or urban studies, include it.
+
+Return the numbers as JSON: {{"relevant": [1, 2, 5, 7]}}
 
 Items:
 {numbered}"""
@@ -432,9 +637,10 @@ Items:
         for idx in indices:
             if isinstance(idx, int) and 1 <= idx <= len(unique):
                 filtered.append(unique[idx - 1])
-        return filtered[:max_results]
+        if filtered:
+            return filtered[:max_results]
 
-    # Fallback: return all unique results if Ollama can't filter
+    # Fallback: return all unique results
     return unique[:max_results]
 
 
