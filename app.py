@@ -244,7 +244,7 @@ Tasks:
 
 Voice profile: {voice_text}
 
-Respond in the same language the user writes in. Be precise and actionable. If the user writes in Norwegian, respond in Norwegian."""
+Always respond in English. Be precise and actionable."""
 
 
 # ---------------------------------------------------------------------------
