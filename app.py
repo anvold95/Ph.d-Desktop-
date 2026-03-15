@@ -157,10 +157,12 @@ def init_db():
 # Ollama helpers
 # ---------------------------------------------------------------------------
 
-def ollama_generate(prompt, system=None):
+def ollama_generate(prompt, system=None, as_json=False):
     payload = {"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}
     if system:
         payload["system"] = system
+    if as_json:
+        payload["format"] = "json"
     try:
         r = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=120)
         r.raise_for_status()
@@ -168,6 +170,36 @@ def ollama_generate(prompt, system=None):
     except Exception as e:
         log.error("Ollama error: %s", e)
         return f"[Ollama unavailable: {e}]"
+
+
+def parse_json_response(raw, expect_list=False):
+    """Robustly extract JSON from Ollama responses that may contain markdown fences."""
+    import re
+    # Strip markdown code fences
+    cleaned = re.sub(r'```(?:json)?\s*', '', raw)
+    cleaned = cleaned.strip()
+
+    try:
+        parsed = json.loads(cleaned)
+        if expect_list and isinstance(parsed, dict) and any(isinstance(v, list) for v in parsed.values()):
+            for v in parsed.values():
+                if isinstance(v, list):
+                    return v
+        return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # Try to find JSON array or object
+    bracket = "[" if expect_list else "{"
+    end_bracket = "]" if expect_list else "}"
+    try:
+        start = cleaned.index(bracket)
+        end = cleaned.rindex(end_bracket) + 1
+        return json.loads(cleaned[start:end])
+    except (ValueError, json.JSONDecodeError):
+        pass
+
+    return None
 
 
 def ollama_chat(messages):
@@ -237,15 +269,12 @@ Generate 3 relevant current opportunities (conferences, calls for papers, grants
 - approximate deadline (YYYY-MM-DD)
 - a plausible URL or "N/A"
 
-Return ONLY valid JSON: [{{"title":"...","type":"...","description":"...","deadline":"...","url":"..."}}]"""
+Return valid JSON: {{"items": [{{"title":"...","type":"...","description":"...","deadline":"...","url":"..."}}]}}"""
 
-        raw = ollama_generate(prompt)
-        try:
-            start = raw.index("[")
-            end = raw.rindex("]") + 1
-            calls = json.loads(raw[start:end])
-        except (ValueError, json.JSONDecodeError):
-            log.warning("Could not parse open-calls JSON from Ollama")
+        raw = ollama_generate(prompt, as_json=True)
+        calls = parse_json_response(raw, expect_list=True)
+        if not calls:
+            log.warning("Could not parse open-calls JSON from Ollama: %s", raw[:200])
             return
 
         for c in calls:
@@ -273,13 +302,10 @@ def job_generate_drafts():
             voice_instruction = f"\n\nWrite in this voice/style:\n{voice['value']}"
 
         for dtype, instruction in types:
-            prompt = instruction + voice_instruction + "\n\nReturn the result as JSON: {\"title\": \"...\", \"body\": \"...\"}"
-            raw = ollama_generate(prompt, system=ctx)
-            try:
-                start = raw.index("{")
-                end = raw.rindex("}") + 1
-                data = json.loads(raw[start:end])
-            except (ValueError, json.JSONDecodeError):
+            prompt = instruction + voice_instruction + '\n\nReturn valid JSON: {"title": "...", "body": "..."}'
+            raw = ollama_generate(prompt, system=ctx, as_json=True)
+            data = parse_json_response(raw)
+            if not data or not isinstance(data, dict):
                 data = {"title": f"Draft {dtype}", "body": raw}
             db.execute("INSERT INTO inbox (type, title, body) VALUES (?,?,?)",
                        (dtype, data.get("title", f"Draft {dtype}"), data.get("body", "")))
@@ -438,15 +464,12 @@ Generate 5 relevant current opportunities (conferences, calls for papers, grants
 - approximate deadline (YYYY-MM-DD)
 - a plausible URL or "N/A"
 
-Return ONLY valid JSON array: [{{"title":"...","type":"...","description":"...","deadline":"...","url":"..."}}]"""
+Return valid JSON: {{"items": [{{"title":"...","type":"...","description":"...","deadline":"...","url":"..."}}]}}"""
 
-    raw = ollama_generate(prompt)
-    try:
-        start = raw.index("[")
-        end = raw.rindex("]") + 1
-        calls = json.loads(raw[start:end])
-    except (ValueError, json.JSONDecodeError):
-        return jsonify(error="Could not parse AI response", raw=raw), 500
+    raw = ollama_generate(prompt, as_json=True)
+    calls = parse_json_response(raw, expect_list=True)
+    if not calls:
+        return jsonify(error="Could not parse AI response"), 500
 
     for c in calls:
         db.execute("INSERT INTO open_calls (title, type, description, deadline, url) VALUES (?,?,?,?,?)",
@@ -491,14 +514,11 @@ def generate_inbox_draft():
         "outreach": "Write an outreach email (200-300 words) to a potential PhD supervisor at one of the listed programs. Specific, proposes connection.",
     }
     prompt = type_prompts.get(dtype, type_prompts["substack"]) + voice_instruction
-    prompt += '\n\nReturn the result as JSON: {"title": "...", "body": "..."}'
+    prompt += '\n\nReturn valid JSON: {"title": "...", "body": "..."}'
 
-    raw = ollama_generate(prompt, system=ctx)
-    try:
-        start = raw.index("{")
-        end = raw.rindex("}") + 1
-        data = json.loads(raw[start:end])
-    except (ValueError, json.JSONDecodeError):
+    raw = ollama_generate(prompt, system=ctx, as_json=True)
+    data = parse_json_response(raw)
+    if not data or not isinstance(data, dict):
         data = {"title": f"Draft {dtype}", "body": raw}
 
     db.execute("INSERT INTO inbox (type, title, body) VALUES (?,?,?)",
