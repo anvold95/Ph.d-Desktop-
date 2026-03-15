@@ -14,39 +14,45 @@
     <button onclick="filterTasks('visibility')" class="btn-outline filter-btn" data-filter="visibility">Visibility</button>
 </div>
 
-<div class="card overflow-hidden">
-    <table class="w-full text-sm">
-        <thead>
-            <tr class="border-b border-border text-left text-xs text-muted uppercase tracking-wider">
-                <th class="px-4 py-3 w-8"></th>
-                <th class="px-4 py-3">Task</th>
-                <th class="px-4 py-3">Priority</th>
-                <th class="px-4 py-3">Category</th>
-                <th class="px-4 py-3">Deadline</th>
-                <th class="px-4 py-3 w-24"></th>
-            </tr>
-        </thead>
-        <tbody id="task-list">
-            {% for t in tasks %}
-            <tr class="border-b border-border hover:bg-surface task-row {% if t['done'] %}opacity-50{% endif %}" data-category="{{ t['category'] }}">
-                <td class="px-4 py-3">
-                    <input type="checkbox" {% if t['done'] %}checked{% endif %}
-                           onchange="toggleTask({{ t['id'] }})"
-                           class="rounded border-neutral-300 text-accent focus:ring-accent">
-                </td>
-                <td class="px-4 py-3 {% if t['done'] %}line-through text-muted{% endif %}">{{ t['title'] }}</td>
-                <td class="px-4 py-3"><span class="badge badge-{{ t['priority'] }}">{{ t['priority'] }}</span></td>
-                <td class="px-4 py-3 text-muted text-xs">{{ t['category'] }}</td>
-                <td class="px-4 py-3 text-xs">{{ t['deadline'] or '—' }}</td>
-                <td class="px-4 py-3 text-right">
-                    <button onclick='editTask({{ t | rowtodict | tojson }})' class="text-xs text-accent hover:underline mr-2">Edit</button>
-                    <button onclick="deleteTask({{ t['id'] }})" class="btn-danger">Delete</button>
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+<div class="space-y-2" id="task-list">
+    {% for t in tasks %}
+    {% set attachments = t['attachments'] | load_checklist if t['attachments'] else [] %}
+    <div class="card p-4 task-row {% if t['done'] %}opacity-50{% endif %}" data-category="{{ t['category'] }}">
+        <div class="flex items-start gap-3">
+            <input type="checkbox" {% if t['done'] %}checked{% endif %}
+                   onchange="toggleTask({{ t['id'] }})"
+                   class="mt-1 rounded border-neutral-300 text-accent focus:ring-accent">
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                    <span class="text-sm {% if t['done'] %}line-through text-muted{% endif %}">{{ t['title'] }}</span>
+                    <span class="badge badge-{{ t['priority'] }}">{{ t['priority'] }}</span>
+                    <span class="text-[10px] text-muted">{{ t['category'] }}</span>
+                    {% if t['deadline'] %}<span class="text-[10px] text-muted">{{ t['deadline'] }}</span>{% endif %}
+                </div>
+                {% if attachments %}
+                <div class="flex flex-wrap gap-1.5 mt-2">
+                    {% for a in attachments %}
+                    <div class="flex items-center gap-1 text-[11px] bg-neutral-50 border border-neutral-200 rounded px-2 py-0.5">
+                        <a href="/uploads/{{ a.filename }}" target="_blank" class="text-accent hover:underline">{{ a.original }}</a>
+                        <button onclick="removeFile({{ t['id'] }}, '{{ a.filename }}')" class="text-neutral-400 hover:text-red-500 ml-0.5">&times;</button>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <label class="btn-outline text-[11px] cursor-pointer px-2 py-1">
+                    Attach
+                    <input type="file" class="hidden" onchange="uploadFile({{ t['id'] }}, this)">
+                </label>
+                <button onclick='editTask({{ t | rowtodict | tojson }})' class="text-xs text-accent hover:underline">Edit</button>
+                <button onclick="deleteTask({{ t['id'] }})" class="btn-danger">Del</button>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
 </div>
+
 {% if not tasks %}
 <div class="text-center py-12 text-sm text-muted">No tasks yet. Add one to get started.</div>
 {% endif %}
@@ -94,7 +100,7 @@
 
 {% block scripts %}
 <style>
-.active-filter { background: #eff6ff !important; color: #2563eb !important; border-color: #2563eb !important; }
+.active-filter { background: #f5f5f5 !important; color: #525252 !important; border-color: #a3a3a3 !important; }
 </style>
 <script>
 let editingId = null;
@@ -148,6 +154,28 @@ async function toggleTask(id) {
 async function deleteTask(id) {
     if (!confirm('Delete this task?')) return;
     await api(`/api/tasks/${id}`, { method: 'DELETE' });
+    location.reload();
+}
+
+async function uploadFile(tid, input) {
+    const file = input.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    const r = await fetch(`/api/tasks/${tid}/upload`, { method: 'POST', body: formData });
+    const res = await r.json();
+    if (res.ok) {
+        toast(`Attached: ${res.original}`);
+        location.reload();
+    } else {
+        toast(res.error || 'Upload failed');
+    }
+    input.value = '';
+}
+
+async function removeFile(tid, filename) {
+    await fetch(`/api/tasks/${tid}/files/${filename}`, { method: 'DELETE' });
+    toast('File removed');
     location.reload();
 }
 

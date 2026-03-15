@@ -21,39 +21,33 @@
     </div>
 </div>
 
-<!-- Gamification -->
-<div class="card p-4 mb-5 bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
-    <div class="flex items-center justify-between mb-2">
+<!-- Progress -->
+<div class="card p-4 mb-5">
+    <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-            <div class="text-2xl font-bold text-accent">Lv {{ g.level }}</div>
-            <div class="flex-1">
-                <div class="flex items-center justify-between text-xs text-muted mb-1">
+            <div class="text-lg font-semibold text-neutral-700">Lv {{ g.level }}</div>
+            <div>
+                <div class="flex items-center justify-between text-[11px] text-muted mb-1">
                     <span>{{ g.xp_in_level }} / {{ g.xp_per_level }} XP</span>
-                    <span>Total: {{ g.total_xp }} XP</span>
+                    <span class="ml-6">{{ g.total_xp }} total</span>
                 </div>
-                <div class="w-48 h-2 bg-blue-200 rounded-full overflow-hidden">
-                    <div class="h-full bg-accent rounded-full transition-all" style="width:{{ (g.xp_in_level / g.xp_per_level * 100)|int }}%"></div>
+                <div class="w-40 h-1.5 bg-neutral-200 rounded-full overflow-hidden">
+                    <div class="h-full bg-neutral-500 rounded-full transition-all" style="width:{{ (g.xp_in_level / g.xp_per_level * 100)|int }}%"></div>
                 </div>
             </div>
         </div>
-        <div class="flex items-center gap-4">
+        <div class="flex items-center gap-4 text-xs text-muted">
             {% if g.streak > 0 %}
-            <div class="text-center">
-                <div class="text-lg font-bold text-orange-500">{{ g.streak }}d</div>
-                <div class="text-[10px] text-muted">streak</div>
-            </div>
+            <span>{{ g.streak }}d streak</span>
             {% endif %}
-            <div class="text-center">
-                <div class="text-lg font-bold text-green-600">{{ g.unlocked_count }}/{{ g.total_achievements }}</div>
-                <div class="text-[10px] text-muted">achievements</div>
-            </div>
+            <span>{{ g.unlocked_count }}/{{ g.total_achievements }} achievements</span>
         </div>
     </div>
     {% set recent_unlocked = g.achievements | selectattr('unlocked') | list %}
     {% if recent_unlocked %}
-    <div class="flex gap-2 mt-2 flex-wrap">
+    <div class="flex gap-1.5 mt-2 flex-wrap">
         {% for a in recent_unlocked[:6] %}
-        <span class="text-[10px] px-2 py-0.5 bg-yellow-100 text-yellow-800 rounded-full border border-yellow-300" title="{{ a.description }}">{{ a.title }} (+{{ a.xp_bonus }}xp)</span>
+        <span class="text-[10px] px-1.5 py-0.5 bg-neutral-100 text-neutral-600 rounded" title="{{ a.description }}">{{ a.title }}</span>
         {% endfor %}
         {% if recent_unlocked|length > 6 %}
         <span class="text-[10px] text-muted">+{{ recent_unlocked|length - 6 }} more</span>

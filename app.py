@@ -5,15 +5,20 @@ import sqlite3
 import logging
 import requests
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, jsonify, g, redirect, url_for
+from flask import Flask, render_template, request, jsonify, g, redirect, url_for, send_from_directory
 from apscheduler.schedulers.background import BackgroundScheduler
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
+from werkzeug.utils import secure_filename
 
 load_dotenv()
 
 app = Flask(__name__)
 app.config["DATABASE"] = os.path.join(app.root_path, "phd.db")
+app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "uploads")
+app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16MB max
+
+os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
@@ -94,13 +99,14 @@ def init_db():
     );
 
     CREATE TABLE IF NOT EXISTS tasks (
-        id        INTEGER PRIMARY KEY AUTOINCREMENT,
-        title     TEXT NOT NULL,
-        priority  TEXT DEFAULT 'medium',
-        category  TEXT DEFAULT 'writing',
-        deadline  TEXT,
-        done      INTEGER DEFAULT 0,
-        created   TEXT DEFAULT (datetime('now'))
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        title       TEXT NOT NULL,
+        priority    TEXT DEFAULT 'medium',
+        category    TEXT DEFAULT 'writing',
+        deadline    TEXT,
+        done        INTEGER DEFAULT 0,
+        attachments TEXT DEFAULT '[]',
+        created     TEXT DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS open_calls (
@@ -176,6 +182,7 @@ def init_db():
         ("category", "open_calls", "''"),
         ("relevance_score", "open_calls", "0"),
         ("saved", "open_calls", "0"),
+        ("attachments", "tasks", "'[]'"),
     ]:
         try:
             db.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} TEXT DEFAULT {default}")
@@ -664,6 +671,43 @@ def _score_relevance(title, description=""):
     return score, cats
 
 
+# --- RSS feed helper ---
+
+def _parse_rss(url, source, rtype="cfp"):
+    """Parse RSS/Atom feed and return standardized results."""
+    results = []
+    r = _get(url, timeout=20)
+    if not r:
+        return results
+    soup = BeautifulSoup(r.text, "xml")
+    if not soup.find("item") and not soup.find("entry"):
+        soup = BeautifulSoup(r.text, "html.parser")
+    items = soup.find_all("item") or soup.find_all("entry")
+    for item in items[:30]:
+        title_el = item.find("title")
+        if not title_el:
+            continue
+        title = _clean_text(title_el.get_text())
+        link_el = item.find("link")
+        link = ""
+        if link_el:
+            link = link_el.get("href", "") or link_el.get_text("").strip()
+        desc_el = item.find("description") or item.find("summary") or item.find("content")
+        desc = ""
+        if desc_el:
+            desc_text = desc_el.get_text()
+            desc = _clean_text(desc_text[:300])
+        if not _is_junk(title, desc):
+            score, cats = _score_relevance(title, desc)
+            results.append({
+                "title": title[:150], "type": rtype,
+                "description": desc[:200], "deadline": "",
+                "url": link, "source": source,
+                "relevance_score": score, "category": ", ".join(cats),
+            })
+    return results
+
+
 # --- Scrapers ---
 
 def scrape_eflux():
@@ -1005,8 +1049,166 @@ def scrape_scholarshipdb():
     return results
 
 
+def scrape_rss_feeds():
+    """Scrape RSS feeds — these are the most reliable sources."""
+    results = []
+    feeds = [
+        # e-flux architecture RSS
+        ("https://www.e-flux.com/rss/", "e-flux", "cfp"),
+        # ArchDaily RSS
+        ("https://www.archdaily.com/search/api/v1/us/articles?q=housing&type=news&format=rss", "ArchDaily", "project"),
+        # Archinect RSS
+        ("https://archinect.com/news.xml", "Archinect", "cfp"),
+        # AJAR (Arena Journal of Architectural Research) — open access
+        ("https://ajar.arena-architecture.eu/feed/", "AJAR", "cfp"),
+        # Places Journal RSS
+        ("https://placesjournal.org/feed/", "Places Journal", "essay"),
+        # Failed Architecture RSS
+        ("https://failedarchitecture.com/feed/", "Failed Architecture", "essay"),
+        # The Funambulist RSS
+        ("https://thefunambulist.net/feed", "The Funambulist", "essay"),
+        # Dezeen architecture RSS
+        ("https://www.dezeen.com/architecture/feed/", "Dezeen", "project"),
+        # DOCOMOMO (modern heritage)
+        ("https://docomomo.com/feed/", "DOCOMOMO", "cfp"),
+    ]
+    for url, source, rtype in feeds:
+        try:
+            items = _parse_rss(url, source, rtype)
+            results.extend(items)
+            log.info("  RSS %s: %d results", source, len(items))
+        except Exception as e:
+            log.warning("  RSS %s: failed — %s", source, e)
+    return results
+
+
+def get_curated_calls():
+    """Known, manually curated open calls and standing submission opportunities.
+    Updated periodically. These are real, verified opportunities."""
+    return [
+        {
+            "title": "AJAR — Arena Journal of Architectural Research (rolling submissions)",
+            "type": "cfp", "source": "Curated",
+            "description": "Open-access, double-blind peer-reviewed journal. Accepts essays, design research, and technical research on architecture on a rolling basis.",
+            "deadline": "Rolling", "url": "https://ajar.arena-architecture.eu/",
+            "relevance_score": 60, "category": "architecture, opportunity",
+        },
+        {
+            "title": "The Journal of Architecture — Rolling thematic calls for papers",
+            "type": "cfp", "source": "Curated",
+            "description": "Taylor & Francis. Seeks theoretical, historical, and empirical research that challenges disciplinary assumptions in architecture.",
+            "deadline": "Rolling", "url": "https://www.tandfonline.com/toc/rjar20/current",
+            "relevance_score": 55, "category": "architecture, opportunity",
+        },
+        {
+            "title": "Scaffold Journal — Open call for visual essays",
+            "type": "cfp", "source": "Curated",
+            "description": "Calling for submissions including visual essays that explore architectural research through creative means.",
+            "deadline": "Rolling", "url": "https://www.scaffold-journal.com/",
+            "relevance_score": 50, "category": "architecture, opportunity",
+        },
+        {
+            "title": "Places Journal — Accepting pitches (public scholarship on architecture & urbanism)",
+            "type": "cfp", "source": "Curated",
+            "description": "Open to pitches on architecture, landscape, and urbanism. Peer-reviewed, pays contributors. Strong fit for housing and urban transformation research.",
+            "deadline": "Rolling", "url": "https://placesjournal.org/about/submissions/",
+            "relevance_score": 75, "category": "housing, urban, opportunity",
+        },
+        {
+            "title": "The Avery Review — Essay submissions (critical essays on architecture)",
+            "type": "cfp", "source": "Curated",
+            "description": "Invites critical essays on books, buildings, and other architectural media. Focus on students and early-career researchers.",
+            "deadline": "Rolling", "url": "https://averyreview.com/about",
+            "relevance_score": 60, "category": "architecture, theory, opportunity",
+        },
+        {
+            "title": "OASE Journal — Thematic open calls for architecture essays",
+            "type": "cfp", "source": "Curated",
+            "description": "Dutch/Belgian architectural journal. Publishes thematic issues on architecture, urbanism, and landscape. Regular open calls.",
+            "deadline": "Check website", "url": "https://www.oasejournal.nl/en/Submit",
+            "relevance_score": 65, "category": "architecture, urban, heritage, opportunity",
+        },
+        {
+            "title": "Housing Studies — Paper submissions (Taylor & Francis)",
+            "type": "cfp", "source": "Curated",
+            "description": "Academic journal on housing policy, markets, and built environments. Accepts papers on social housing, renovation, and housing transformation.",
+            "deadline": "Rolling", "url": "https://www.tandfonline.com/toc/chos20/current",
+            "relevance_score": 80, "category": "housing, opportunity",
+        },
+        {
+            "title": "Urban Studies — Paper submissions (SAGE)",
+            "type": "cfp", "source": "Curated",
+            "description": "Interdisciplinary journal on urban issues. Accepts papers on housing, urban transformation, gentrification, and spatial justice.",
+            "deadline": "Rolling", "url": "https://journals.sagepub.com/home/usj",
+            "relevance_score": 70, "category": "urban, housing, opportunity",
+        },
+        {
+            "title": "Architectural Research Quarterly (arq) — Cambridge University Press",
+            "type": "cfp", "source": "Curated",
+            "description": "Publishes architectural research including housing studies, heritage, and adaptive reuse. Peer-reviewed.",
+            "deadline": "Rolling", "url": "https://www.cambridge.org/core/journals/arq-architectural-research-quarterly",
+            "relevance_score": 65, "category": "architecture, heritage, opportunity",
+        },
+        {
+            "title": "Log Journal — Unsolicited manuscripts accepted",
+            "type": "cfp", "source": "Curated",
+            "description": "Critical journal of architecture theory. Accepts unsolicited manuscripts on architectural theory, history, and criticism.",
+            "deadline": "Rolling", "url": "https://www.anycorp.com/log",
+            "relevance_score": 50, "category": "architecture, theory, opportunity",
+        },
+        {
+            "title": "Conditions Magazine — Nordic architecture and spatial practice",
+            "type": "cfp", "source": "Curated",
+            "description": "Publication focused on Nordic architecture. Relevant for research on Scandinavian housing and spatial practice.",
+            "deadline": "Rolling", "url": "https://conditionsmagazine.com",
+            "relevance_score": 70, "category": "architecture, urban, opportunity",
+        },
+        {
+            "title": "DOCOMOMO Journal — Modern Movement heritage",
+            "type": "cfp", "source": "Curated",
+            "description": "Documentation and Conservation of buildings of the Modern Movement. Accepts papers on postwar architecture preservation.",
+            "deadline": "Rolling", "url": "https://docomomo.com/journal/",
+            "relevance_score": 80, "category": "postwar, heritage, architecture, opportunity",
+        },
+        {
+            "title": "FindAPhD — Architecture & Housing PhD positions (live search)",
+            "type": "phd", "source": "Curated",
+            "description": "Search for current PhD positions in architecture, housing, urban design, and heritage. Updated daily.",
+            "deadline": "Varies", "url": "https://www.findaphd.com/phds/?Keywords=architecture+housing+urban",
+            "relevance_score": 85, "category": "housing, architecture, opportunity",
+        },
+        {
+            "title": "EURAXESS — PhD/postdoc positions in architecture & built environment",
+            "type": "phd", "source": "Curated",
+            "description": "EU-funded research positions. Filter by architecture, urban studies, and heritage.",
+            "deadline": "Varies", "url": "https://euraxess.ec.europa.eu/jobs/search?keywords=architecture+housing+urban",
+            "relevance_score": 80, "category": "architecture, urban, opportunity",
+        },
+        {
+            "title": "jobs.ac.uk — UK academic positions in architecture",
+            "type": "phd", "source": "Curated",
+            "description": "UK university jobs in architecture, planning, and built environment. PhD studentships regularly posted.",
+            "deadline": "Varies", "url": "https://www.jobs.ac.uk/search/?keywords=architecture+housing+phd",
+            "relevance_score": 70, "category": "architecture, housing, opportunity",
+        },
+    ]
+
+
 def scrape_all_sources():
     all_results = []
+
+    # 1. Curated calls (always reliable)
+    all_results.extend(get_curated_calls())
+    log.info("  Curated: %d results", len(get_curated_calls()))
+
+    # 2. RSS feeds (reliable)
+    try:
+        rss_results = scrape_rss_feeds()
+        all_results.extend(rss_results)
+    except Exception as e:
+        log.warning("  RSS feeds failed: %s", e)
+
+    # 3. HTML scrapers (best effort, may fail)
     scrapers = [
         ("e-flux", scrape_eflux),
         ("Archinect", scrape_archinect),
@@ -1276,9 +1478,69 @@ def toggle_task(tid):
 @app.route("/api/tasks/<int:tid>", methods=["DELETE"])
 def delete_task(tid):
     db = get_db()
+    # Clean up attachments
+    task = db.execute("SELECT attachments FROM tasks WHERE id=?", (tid,)).fetchone()
+    if task and task["attachments"]:
+        try:
+            files = json.loads(task["attachments"])
+            for f in files:
+                fpath = os.path.join(app.config["UPLOAD_FOLDER"], f["filename"])
+                if os.path.exists(fpath):
+                    os.remove(fpath)
+        except (json.JSONDecodeError, KeyError):
+            pass
     db.execute("DELETE FROM tasks WHERE id=?", (tid,))
     db.commit()
     return jsonify(ok=True)
+
+
+@app.route("/api/tasks/<int:tid>/upload", methods=["POST"])
+def upload_task_file(tid):
+    """Upload a file attachment to a task."""
+    if "file" not in request.files:
+        return jsonify(error="No file provided"), 400
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify(error="Empty filename"), 400
+    # Secure the filename and make it unique
+    original = secure_filename(file.filename)
+    unique_name = f"{tid}_{int(datetime.now().timestamp())}_{original}"
+    file.save(os.path.join(app.config["UPLOAD_FOLDER"], unique_name))
+    db = get_db()
+    task = db.execute("SELECT attachments FROM tasks WHERE id=?", (tid,)).fetchone()
+    attachments = []
+    if task and task["attachments"]:
+        try:
+            attachments = json.loads(task["attachments"])
+        except json.JSONDecodeError:
+            attachments = []
+    attachments.append({"filename": unique_name, "original": original,
+                        "uploaded": datetime.now().isoformat()})
+    db.execute("UPDATE tasks SET attachments=? WHERE id=?", (json.dumps(attachments), tid))
+    db.commit()
+    return jsonify(ok=True, filename=unique_name, original=original)
+
+
+@app.route("/api/tasks/<int:tid>/files/<filename>", methods=["DELETE"])
+def delete_task_file(tid, filename):
+    """Remove a file attachment from a task."""
+    db = get_db()
+    task = db.execute("SELECT attachments FROM tasks WHERE id=?", (tid,)).fetchone()
+    if not task:
+        return jsonify(error="Task not found"), 404
+    attachments = json.loads(task["attachments"] or "[]")
+    attachments = [a for a in attachments if a["filename"] != filename]
+    db.execute("UPDATE tasks SET attachments=? WHERE id=?", (json.dumps(attachments), tid))
+    db.commit()
+    fpath = os.path.join(app.config["UPLOAD_FOLDER"], secure_filename(filename))
+    if os.path.exists(fpath):
+        os.remove(fpath)
+    return jsonify(ok=True)
+
+
+@app.route("/uploads/<filename>")
+def serve_upload(filename):
+    return send_from_directory(app.config["UPLOAD_FOLDER"], secure_filename(filename))
 
 
 # ---------------------------------------------------------------------------
@@ -1503,18 +1765,26 @@ def suggest_pitch():
     if not target:
         return jsonify(error="Target not found"), 404
     ctx = build_system_context()
-    prompt = f"""Based on the research angle and voice profile above, suggest a specific article pitch for:
+    voice = db.execute("SELECT value FROM profile WHERE key='voice_profile'").fetchone()
+    voice_instruction = ""
+    if voice and voice["value"]:
+        voice_instruction = f"\n\nWrite in this voice/style:\n{voice['value']}"
+    prompt = f"""You are a sharp editorial strategist. Based on the research context above, write an actual pitch email for:
 
 Publication: {target['name']} ({target['type']})
-Description: {target['description']}
-URL: {target['url']}
+About this publication: {target['description']}
 
-Write a concise pitch (150-200 words) that:
-1. Proposes a specific article title
-2. Explains the angle and why it fits this publication
-3. Connects to the PhD research on postwar housing transformation
+IMPORTANT RULES:
+- Write as if you are the researcher pitching to a real editor
+- The pitch must be SPECIFIC — not generic. Name concrete examples, places, buildings, debates
+- Do NOT use vague phrases like "this article will examine" or "this piece will explore"
+- Instead, LEAD with the argument: what is the actual claim or provocation?
+- Reference specific buildings (Rågsved, Tensta, Rosengård, etc.), architects, policies, or debates
+- The title should be punchy and editorial, not academic
+- Keep it under 200 words — editors want brevity
+- End with 1-2 sentences about who you are and why you're the right person to write this{voice_instruction}
 
-Return JSON: {{"title": "proposed article title", "pitch": "the pitch text"}}"""
+Return JSON: {{"title": "article title (punchy, editorial)", "pitch": "the pitch email body"}}"""
     raw = ollama_generate(prompt, system=ctx, as_json=True)
     data = parse_json_response(raw)
     if not data or not isinstance(data, dict):
