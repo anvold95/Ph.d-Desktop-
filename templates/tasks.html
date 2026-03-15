@@ -39,7 +39,7 @@
                 <td class="px-4 py-3 text-muted text-xs">{{ t['category'] }}</td>
                 <td class="px-4 py-3 text-xs">{{ t['deadline'] or '—' }}</td>
                 <td class="px-4 py-3 text-right">
-                    <button onclick='editTask({{ t | tojson }})' class="text-xs text-accent hover:underline mr-2">Edit</button>
+                    <button onclick='editTask({{ t | rowtodict | tojson }})' class="text-xs text-accent hover:underline mr-2">Edit</button>
                     <button onclick="deleteTask({{ t['id'] }})" class="btn-danger">Delete</button>
                 </td>
             </tr>

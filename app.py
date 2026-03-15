@@ -16,6 +16,14 @@ app.config["DATABASE"] = os.path.join(app.root_path, "phd.db")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 
+
+@app.template_filter("rowtodict")
+def rowtodict_filter(row):
+    return dict(row)
+
+
+app.jinja_env.filters["tojson_safe"] = lambda val: json.dumps(dict(val) if isinstance(val, sqlite3.Row) else val)
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------

@@ -40,7 +40,7 @@
                 </td>
                 <td class="px-4 py-3 text-xs text-muted max-w-[200px] truncate">{{ p['notes'] }}</td>
                 <td class="px-4 py-3 text-right">
-                    <button onclick='editProgram({{ p | tojson }})' class="text-xs text-accent hover:underline mr-2">Edit</button>
+                    <button onclick='editProgram({{ p | rowtodict | tojson }})' class="text-xs text-accent hover:underline mr-2">Edit</button>
                     <button onclick="deleteProgram({{ p['id'] }})" class="btn-danger">Delete</button>
                 </td>
             </tr>
