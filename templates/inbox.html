@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Inbox — PhD Command Center{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-lg font-semibold">Inbox</h2>
+    <div class="flex gap-2">
+        <button onclick="generateDraft('substack')" class="btn-outline">+ Substack</button>
+        <button onclick="generateDraft('linkedin')" class="btn-outline">+ LinkedIn</button>
+        <button onclick="generateDraft('outreach')" class="btn-outline">+ Outreach</button>
+    </div>
+</div>
+
+<div id="loading" class="hidden card p-6 mb-4 text-center">
+    <span class="spinner mr-2"></span>
+    <span class="text-sm text-muted">Generating draft...</span>
+</div>
+
+{% set pending = items | selectattr('status', 'equalto', 'pending') | list %}
+{% set reviewed = items | rejectattr('status', 'equalto', 'pending') | list %}
+
+{% if pending %}
+<h3 class="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Pending review ({{ pending|length }})</h3>
+<div class="space-y-3 mb-6">
+    {% for item in pending %}
+    <div class="card p-5">
+        <div class="flex items-center gap-2 mb-2">
+            <span class="badge badge-pending">{{ item['type'] }}</span>
+            <span class="text-sm font-medium">{{ item['title'] }}</span>
+            <span class="text-xs text-muted ml-auto">{{ item['created'][:10] }}</span>
+        </div>
+        <div class="text-sm leading-relaxed whitespace-pre-line mb-4 text-neutral-600">{{ item['body'] }}</div>
+        <div class="flex gap-2">
+            <button onclick="inboxAction({{ item['id'] }}, 'approve')" class="btn-primary">Approve</button>
+            <button onclick="inboxAction({{ item['id'] }}, 'reject')" class="btn-outline">Reject</button>
+            <button onclick="deleteInbox({{ item['id'] }})" class="btn-danger ml-auto">Delete</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% if reviewed %}
+<h3 class="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Reviewed</h3>
+<div class="space-y-3">
+    {% for item in reviewed %}
+    <div class="card p-4 opacity-70">
+        <div class="flex items-center gap-2">
+            <span class="badge badge-{{ item['status'] }}">{{ item['status'] }}</span>
+            <span class="badge badge-pending">{{ item['type'] }}</span>
+            <span class="text-sm">{{ item['title'] }}</span>
+            <button onclick="deleteInbox({{ item['id'] }})" class="btn-danger ml-auto">Delete</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% if not items %}
+<div class="card p-12 text-center">
+    <p class="text-sm text-muted mb-2">Inbox is empty.</p>
+    <p class="text-xs text-muted">Generate drafts using the buttons above, or wait for the weekly scheduled generation.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function generateDraft(type) {
+    document.getElementById('loading').classList.remove('hidden');
+    await api('/api/inbox/generate', { method: 'POST', body: { type } });
+    toast('Draft generated');
+    location.reload();
+}
+
+async function inboxAction(id, action) {
+    await api(`/api/inbox/${id}/${action}`, { method: 'POST' });
+    toast(`Draft ${action}d`);
+    location.reload();
+}
+
+async function deleteInbox(id) {
+    await api(`/api/inbox/${id}`, { method: 'DELETE' });
+    location.reload();
+}
+</script>
+{% endblock %}

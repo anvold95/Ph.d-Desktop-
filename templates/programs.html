@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Programs — PhD Command Center{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-lg font-semibold">Programs</h2>
+    <button onclick="openModal()" class="btn-primary">+ Add program</button>
+</div>
+
+<div class="card overflow-hidden">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="border-b border-border text-left text-xs text-muted uppercase tracking-wider">
+                <th class="px-4 py-3">Name</th>
+                <th class="px-4 py-3">Country</th>
+                <th class="px-4 py-3">Deadline</th>
+                <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3">Fit</th>
+                <th class="px-4 py-3">Notes</th>
+                <th class="px-4 py-3 w-24"></th>
+            </tr>
+        </thead>
+        <tbody id="program-list">
+            {% for p in programs %}
+            <tr class="border-b border-border hover:bg-surface" data-id="{{ p['id'] }}">
+                <td class="px-4 py-3 font-medium">{{ p['name'] }}</td>
+                <td class="px-4 py-3 text-muted">{{ p['country'] }}</td>
+                <td class="px-4 py-3">{{ p['deadline'] }}</td>
+                <td class="px-4 py-3">
+                    <span class="badge {% if p['status'] == 'shortlisted' %}badge-low{% elif p['status'] == 'applied' %}badge-pending{% else %}badge-medium{% endif %}">
+                        {{ p['status'] }}
+                    </span>
+                </td>
+                <td class="px-4 py-3">
+                    <div class="flex items-center gap-2">
+                        <div class="w-16 h-1.5 bg-neutral-200 rounded-full overflow-hidden">
+                            <div class="h-full bg-accent rounded-full" style="width:{{ p['fit_score'] }}%"></div>
+                        </div>
+                        <span class="text-xs text-muted">{{ p['fit_score'] }}</span>
+                    </div>
+                </td>
+                <td class="px-4 py-3 text-xs text-muted max-w-[200px] truncate">{{ p['notes'] }}</td>
+                <td class="px-4 py-3 text-right">
+                    <button onclick='editProgram({{ p | tojson }})' class="text-xs text-accent hover:underline mr-2">Edit</button>
+                    <button onclick="deleteProgram({{ p['id'] }})" class="btn-danger">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Modal -->
+<div id="modal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50 hidden">
+    <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+        <h3 id="modal-title" class="text-sm font-semibold mb-4">Add Program</h3>
+        <input type="hidden" id="prog-id">
+        <div class="space-y-3">
+            <div>
+                <label class="text-xs text-muted">Name</label>
+                <input id="prog-name" class="w-full" placeholder="University name">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="text-xs text-muted">Country</label>
+                    <input id="prog-country" class="w-full">
+                </div>
+                <div>
+                    <label class="text-xs text-muted">Deadline</label>
+                    <input id="prog-deadline" type="date" class="w-full">
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="text-xs text-muted">Status</label>
+                    <select id="prog-status" class="w-full">
+                        <option value="researching">Researching</option>
+                        <option value="shortlisted">Shortlisted</option>
+                        <option value="applied">Applied</option>
+                        <option value="accepted">Accepted</option>
+                        <option value="rejected">Rejected</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs text-muted">Fit score (0-100)</label>
+                    <input id="prog-fit" type="number" min="0" max="100" class="w-full" value="50">
+                </div>
+            </div>
+            <div>
+                <label class="text-xs text-muted">Notes</label>
+                <textarea id="prog-notes" class="w-full h-20"></textarea>
+            </div>
+        </div>
+        <div class="flex justify-end gap-2 mt-4">
+            <button onclick="closeModal()" class="btn-outline">Cancel</button>
+            <button onclick="saveProgram()" class="btn-primary">Save</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let editingId = null;
+
+function openModal() {
+    editingId = null;
+    document.getElementById('modal-title').textContent = 'Add Program';
+    ['prog-name','prog-country','prog-deadline','prog-notes'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('prog-status').value = 'researching';
+    document.getElementById('prog-fit').value = 50;
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function editProgram(p) {
+    editingId = p.id;
+    document.getElementById('modal-title').textContent = 'Edit Program';
+    document.getElementById('prog-name').value = p.name;
+    document.getElementById('prog-country').value = p.country || '';
+    document.getElementById('prog-deadline').value = p.deadline || '';
+    document.getElementById('prog-status').value = p.status || 'researching';
+    document.getElementById('prog-fit').value = p.fit_score || 0;
+    document.getElementById('prog-notes').value = p.notes || '';
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function closeModal() {
+    document.getElementById('modal').classList.add('hidden');
+}
+
+async function saveProgram() {
+    const data = {
+        name: document.getElementById('prog-name').value,
+        country: document.getElementById('prog-country').value,
+        deadline: document.getElementById('prog-deadline').value,
+        status: document.getElementById('prog-status').value,
+        fit_score: parseInt(document.getElementById('prog-fit').value) || 0,
+        notes: document.getElementById('prog-notes').value,
+    };
+    if (!data.name) { toast('Name is required'); return; }
+    if (editingId) {
+        await api(`/api/programs/${editingId}`, { method: 'PUT', body: data });
+        toast('Program updated');
+    } else {
+        await api('/api/programs', { method: 'POST', body: data });
+        toast('Program added');
+    }
+    closeModal();
+    location.reload();
+}
+
+async function deleteProgram(id) {
+    if (!confirm('Delete this program?')) return;
+    await api(`/api/programs/${id}`, { method: 'DELETE' });
+    toast('Program deleted');
+    location.reload();
+}
+</script>
+{% endblock %}

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}PhD Command Center{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        surface: '#fafafa',
+                        border: '#e5e5e5',
+                        muted: '#737373',
+                        accent: '#2563eb',
+                        'accent-light': '#eff6ff',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+        body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+        .nav-link { transition: all 0.15s; }
+        .nav-link:hover { background: #eff6ff; color: #2563eb; }
+        .nav-link.active { background: #eff6ff; color: #2563eb; border-left: 2px solid #2563eb; }
+        .card { background: white; border: 1px solid #e5e5e5; border-radius: 6px; }
+        .btn-primary { background: #2563eb; color: white; padding: 6px 16px; border-radius: 4px; font-size: 13px; font-weight: 500; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-outline { border: 1px solid #d4d4d4; color: #525252; padding: 6px 16px; border-radius: 4px; font-size: 13px; font-weight: 500; background: white; }
+        .btn-outline:hover { background: #f5f5f5; }
+        .btn-danger { color: #dc2626; font-size: 12px; }
+        .btn-danger:hover { text-decoration: underline; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 500; }
+        .badge-high { background: #fef2f2; color: #991b1b; }
+        .badge-medium { background: #fffbeb; color: #92400e; }
+        .badge-low { background: #f0fdf4; color: #166534; }
+        .badge-pending { background: #eff6ff; color: #1e40af; }
+        .badge-approved { background: #f0fdf4; color: #166534; }
+        .badge-rejected { background: #fef2f2; color: #991b1b; }
+        input, select, textarea { border: 1px solid #d4d4d4; border-radius: 4px; padding: 6px 10px; font-size: 13px; outline: none; }
+        input:focus, select:focus, textarea:focus { border-color: #2563eb; box-shadow: 0 0 0 2px #eff6ff; }
+        .spinner { border: 2px solid #e5e5e5; border-top: 2px solid #2563eb; border-radius: 50%; width: 16px; height: 16px; animation: spin 0.6s linear infinite; display: inline-block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .toast { position: fixed; bottom: 24px; right: 24px; background: #171717; color: white; padding: 10px 20px; border-radius: 6px; font-size: 13px; z-index: 999; opacity: 0; transition: opacity 0.2s; }
+        .toast.show { opacity: 1; }
+    </style>
+</head>
+<body class="bg-surface text-neutral-800 min-h-screen">
+
+<div class="flex min-h-screen">
+    <!-- Sidebar -->
+    <nav class="w-56 bg-white border-r border-border flex-shrink-0 flex flex-col">
+        <div class="px-5 py-4 border-b border-border">
+            <h1 class="text-sm font-semibold tracking-tight text-neutral-900">PhD Command Center</h1>
+        </div>
+        <div class="flex-1 py-2">
+            <a href="/" class="nav-link flex items-center gap-3 px-5 py-2 text-[13px] {% if request.path == '/' %}active{% endif %}">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1"/></svg>
+                Dashboard
+            </a>
+            <a href="/programs" class="nav-link flex items-center gap-3 px-5 py-2 text-[13px] {% if request.path == '/programs' %}active{% endif %}">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+                Programs
+            </a>
+            <a href="/tasks" class="nav-link flex items-center gap-3 px-5 py-2 text-[13px] {% if request.path == '/tasks' %}active{% endif %}">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                Tasks
+            </a>
+            <a href="/open-calls" class="nav-link flex items-center gap-3 px-5 py-2 text-[13px] {% if request.path == '/open-calls' %}active{% endif %}">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                Open Calls
+            </a>
+            <a href="/inbox" class="nav-link flex items-center gap-3 px-5 py-2 text-[13px] {% if request.path == '/inbox' %}active{% endif %}">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
+                Inbox
+            </a>
+            <a href="/voice" class="nav-link flex items-center gap-3 px-5 py-2 text-[13px] {% if request.path == '/voice' %}active{% endif %}">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
+                Voice
+            </a>
+            <a href="/chat" class="nav-link flex items-center gap-3 px-5 py-2 text-[13px] {% if request.path == '/chat' %}active{% endif %}">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                AI Chat
+            </a>
+        </div>
+        <div class="px-5 py-3 border-t border-border text-[11px] text-muted">
+            Ollama: {{ OLLAMA_MODEL | default('llama3.2') }}
+        </div>
+    </nav>
+
+    <!-- Main content -->
+    <main class="flex-1 overflow-y-auto">
+        <div class="max-w-5xl mx-auto px-8 py-6">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+function toast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+async function api(url, opts = {}) {
+    opts.headers = { 'Content-Type': 'application/json', ...opts.headers };
+    if (opts.body && typeof opts.body === 'object') opts.body = JSON.stringify(opts.body);
+    const r = await fetch(url, opts);
+    return r.json();
+}
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

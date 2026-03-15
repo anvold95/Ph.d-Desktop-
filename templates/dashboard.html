@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — PhD Command Center{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-lg font-semibold">Dashboard</h2>
+    <span class="text-xs text-muted">{{ now().strftime('%A %d %B %Y') if now is defined else '' }}</span>
+</div>
+
+<!-- Research Angle -->
+<div class="card p-5 mb-5">
+    <div class="flex items-center justify-between mb-2">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-muted">Research Angle</h3>
+        <button onclick="toggleAngleEdit()" class="text-xs text-accent hover:underline" id="angle-edit-btn">Edit</button>
+    </div>
+    <p id="angle-display" class="text-sm leading-relaxed">{{ angle }}</p>
+    <div id="angle-editor" class="hidden mt-2">
+        <textarea id="angle-input" class="w-full h-20" >{{ angle }}</textarea>
+        <div class="flex gap-2 mt-2">
+            <button onclick="saveAngle()" class="btn-primary">Save</button>
+            <button onclick="toggleAngleEdit()" class="btn-outline">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Stats row -->
+<div class="grid grid-cols-4 gap-4 mb-5">
+    <div class="card p-4">
+        <div class="text-xs text-muted mb-1">Programs</div>
+        <div class="text-2xl font-semibold">{{ programs|length }}</div>
+    </div>
+    <div class="card p-4">
+        <div class="text-xs text-muted mb-1">Tasks done</div>
+        <div class="text-2xl font-semibold">{{ done_tasks }}<span class="text-sm text-muted font-normal"> / {{ total_tasks }}</span></div>
+    </div>
+    <div class="card p-4">
+        <div class="text-xs text-muted mb-1">Inbox pending</div>
+        <div class="text-2xl font-semibold">{{ inbox_pending }}</div>
+    </div>
+    <div class="card p-4">
+        <div class="text-xs text-muted mb-1">Next deadline</div>
+        <div class="text-sm font-semibold">
+            {% if upcoming_deadlines %}
+                {{ upcoming_deadlines[0]['name'] }}<br>
+                <span class="text-muted font-normal">{{ upcoming_deadlines[0]['deadline'] }}</span>
+            {% else %}
+                —
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Quick actions -->
+<div class="flex gap-3 mb-5">
+    <a href="/open-calls" class="btn-outline">Scan Open Calls</a>
+    <a href="/inbox" class="btn-outline">View Inbox</a>
+    <a href="/chat" class="btn-outline">AI Chat</a>
+    <a href="/voice" class="btn-outline">Train Voice</a>
+</div>
+
+<!-- Two columns: upcoming deadlines + recent tasks -->
+<div class="grid grid-cols-2 gap-5">
+    <div class="card p-5">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Upcoming Deadlines</h3>
+        {% if upcoming_deadlines %}
+        <ul class="space-y-2">
+            {% for d in upcoming_deadlines %}
+            <li class="flex justify-between text-sm">
+                <span>{{ d['name'] }}</span>
+                <span class="text-muted text-xs">{{ d['deadline'] }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-sm text-muted">No upcoming deadlines.</p>
+        {% endif %}
+    </div>
+    <div class="card p-5">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Active Tasks</h3>
+        {% set active_tasks = tasks | selectattr('done', 'equalto', 0) | list %}
+        {% if active_tasks %}
+        <ul class="space-y-2">
+            {% for t in active_tasks[:7] %}
+            <li class="flex items-center gap-2 text-sm">
+                <span class="badge badge-{{ t['priority'] }}">{{ t['priority'] }}</span>
+                <span>{{ t['title'] }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-sm text-muted">No active tasks.</p>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleAngleEdit() {
+    document.getElementById('angle-editor').classList.toggle('hidden');
+    document.getElementById('angle-display').classList.toggle('hidden');
+}
+async function saveAngle() {
+    const val = document.getElementById('angle-input').value;
+    await api('/api/profile', { method: 'POST', body: { research_angle: val } });
+    document.getElementById('angle-display').textContent = val;
+    toggleAngleEdit();
+    toast('Research angle updated');
+}
+</script>
+{% endblock %}

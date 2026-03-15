@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Open Calls — PhD Command Center{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-lg font-semibold">Open Calls</h2>
+    <button onclick="generateCalls()" id="gen-btn" class="btn-primary">
+        <span id="gen-text">Generate with AI</span>
+        <span id="gen-spin" class="spinner hidden ml-2"></span>
+    </button>
+</div>
+
+<p class="text-xs text-muted mb-4">AI-generated conferences, CFPs, grants, and fellowships relevant to your research angle. Verify details independently.</p>
+
+{% if calls %}
+<div class="space-y-3">
+    {% for c in calls %}
+    <div class="card p-4">
+        <div class="flex items-start justify-between">
+            <div class="flex-1">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="text-sm font-medium">{{ c['title'] }}</span>
+                    <span class="badge badge-pending">{{ c['type'] }}</span>
+                </div>
+                <p class="text-xs text-muted mb-2">{{ c['description'] }}</p>
+                <div class="flex items-center gap-4 text-xs text-muted">
+                    {% if c['deadline'] %}<span>Deadline: {{ c['deadline'] }}</span>{% endif %}
+                    {% if c['url'] and c['url'] != 'N/A' %}
+                    <a href="{{ c['url'] }}" target="_blank" class="text-accent hover:underline">Link</a>
+                    {% endif %}
+                </div>
+            </div>
+            <button onclick="deleteCall({{ c['id'] }})" class="btn-danger ml-4">Remove</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card p-12 text-center">
+    <p class="text-sm text-muted mb-3">No open calls yet.</p>
+    <p class="text-xs text-muted">Click "Generate with AI" to scan for relevant opportunities.</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function generateCalls() {
+    const btn = document.getElementById('gen-btn');
+    const text = document.getElementById('gen-text');
+    const spin = document.getElementById('gen-spin');
+    btn.disabled = true;
+    text.textContent = 'Scanning...';
+    spin.classList.remove('hidden');
+    const res = await api('/api/open-calls/generate', { method: 'POST' });
+    if (res.ok) {
+        toast(`Found ${res.count} opportunities`);
+        location.reload();
+    } else {
+        toast(res.error || 'Generation failed');
+        btn.disabled = false;
+        text.textContent = 'Generate with AI';
+        spin.classList.add('hidden');
+    }
+}
+
+async function deleteCall(id) {
+    await api(`/api/open-calls/${id}`, { method: 'DELETE' });
+    location.reload();
+}
+</script>
+{% endblock %}

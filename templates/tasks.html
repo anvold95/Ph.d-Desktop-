@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Tasks — PhD Command Center{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-lg font-semibold">Tasks</h2>
+    <button onclick="openModal()" class="btn-primary">+ Add task</button>
+</div>
+
+<!-- Filters -->
+<div class="flex gap-2 mb-4">
+    <button onclick="filterTasks('all')" class="btn-outline filter-btn active-filter" data-filter="all">All</button>
+    <button onclick="filterTasks('writing')" class="btn-outline filter-btn" data-filter="writing">Writing</button>
+    <button onclick="filterTasks('networking')" class="btn-outline filter-btn" data-filter="networking">Networking</button>
+    <button onclick="filterTasks('visibility')" class="btn-outline filter-btn" data-filter="visibility">Visibility</button>
+</div>
+
+<div class="card overflow-hidden">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="border-b border-border text-left text-xs text-muted uppercase tracking-wider">
+                <th class="px-4 py-3 w-8"></th>
+                <th class="px-4 py-3">Task</th>
+                <th class="px-4 py-3">Priority</th>
+                <th class="px-4 py-3">Category</th>
+                <th class="px-4 py-3">Deadline</th>
+                <th class="px-4 py-3 w-24"></th>
+            </tr>
+        </thead>
+        <tbody id="task-list">
+            {% for t in tasks %}
+            <tr class="border-b border-border hover:bg-surface task-row {% if t['done'] %}opacity-50{% endif %}" data-category="{{ t['category'] }}">
+                <td class="px-4 py-3">
+                    <input type="checkbox" {% if t['done'] %}checked{% endif %}
+                           onchange="toggleTask({{ t['id'] }})"
+                           class="rounded border-neutral-300 text-accent focus:ring-accent">
+                </td>
+                <td class="px-4 py-3 {% if t['done'] %}line-through text-muted{% endif %}">{{ t['title'] }}</td>
+                <td class="px-4 py-3"><span class="badge badge-{{ t['priority'] }}">{{ t['priority'] }}</span></td>
+                <td class="px-4 py-3 text-muted text-xs">{{ t['category'] }}</td>
+                <td class="px-4 py-3 text-xs">{{ t['deadline'] or '—' }}</td>
+                <td class="px-4 py-3 text-right">
+                    <button onclick='editTask({{ t | tojson }})' class="text-xs text-accent hover:underline mr-2">Edit</button>
+                    <button onclick="deleteTask({{ t['id'] }})" class="btn-danger">Delete</button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% if not tasks %}
+<div class="text-center py-12 text-sm text-muted">No tasks yet. Add one to get started.</div>
+{% endif %}
+
+<!-- Modal -->
+<div id="modal" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50 hidden">
+    <div class="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+        <h3 id="modal-title" class="text-sm font-semibold mb-4">Add Task</h3>
+        <div class="space-y-3">
+            <div>
+                <label class="text-xs text-muted">Title</label>
+                <input id="task-title" class="w-full" placeholder="What needs to be done?">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="text-xs text-muted">Priority</label>
+                    <select id="task-priority" class="w-full">
+                        <option value="high">High</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="low">Low</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs text-muted">Category</label>
+                    <select id="task-category" class="w-full">
+                        <option value="writing">Writing</option>
+                        <option value="networking">Networking</option>
+                        <option value="visibility">Visibility</option>
+                    </select>
+                </div>
+            </div>
+            <div>
+                <label class="text-xs text-muted">Deadline</label>
+                <input id="task-deadline" type="date" class="w-full">
+            </div>
+        </div>
+        <div class="flex justify-end gap-2 mt-4">
+            <button onclick="closeModal()" class="btn-outline">Cancel</button>
+            <button onclick="saveTask()" class="btn-primary">Save</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<style>
+.active-filter { background: #eff6ff !important; color: #2563eb !important; border-color: #2563eb !important; }
+</style>
+<script>
+let editingId = null;
+
+function openModal() {
+    editingId = null;
+    document.getElementById('modal-title').textContent = 'Add Task';
+    document.getElementById('task-title').value = '';
+    document.getElementById('task-priority').value = 'medium';
+    document.getElementById('task-category').value = 'writing';
+    document.getElementById('task-deadline').value = '';
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function editTask(t) {
+    editingId = t.id;
+    document.getElementById('modal-title').textContent = 'Edit Task';
+    document.getElementById('task-title').value = t.title;
+    document.getElementById('task-priority').value = t.priority;
+    document.getElementById('task-category').value = t.category;
+    document.getElementById('task-deadline').value = t.deadline || '';
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function closeModal() { document.getElementById('modal').classList.add('hidden'); }
+
+async function saveTask() {
+    const data = {
+        title: document.getElementById('task-title').value,
+        priority: document.getElementById('task-priority').value,
+        category: document.getElementById('task-category').value,
+        deadline: document.getElementById('task-deadline').value,
+    };
+    if (!data.title) { toast('Title is required'); return; }
+    if (editingId) {
+        await api(`/api/tasks/${editingId}`, { method: 'PUT', body: data });
+        toast('Task updated');
+    } else {
+        await api('/api/tasks', { method: 'POST', body: data });
+        toast('Task added');
+    }
+    closeModal();
+    location.reload();
+}
+
+async function toggleTask(id) {
+    await api(`/api/tasks/${id}/toggle`, { method: 'POST' });
+    location.reload();
+}
+
+async function deleteTask(id) {
+    if (!confirm('Delete this task?')) return;
+    await api(`/api/tasks/${id}`, { method: 'DELETE' });
+    location.reload();
+}
+
+function filterTasks(cat) {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active-filter'));
+    document.querySelector(`[data-filter="${cat}"]`).classList.add('active-filter');
+    document.querySelectorAll('.task-row').forEach(row => {
+        row.style.display = (cat === 'all' || row.dataset.category === cat) ? '' : 'none';
+    });
+}
+</script>
+{% endblock %}

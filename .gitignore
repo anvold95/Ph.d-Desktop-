@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+phd.db
+.env
+scheduler.log
+*.sqlite

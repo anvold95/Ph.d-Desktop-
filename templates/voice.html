@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Voice Training — PhD Command Center{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-lg font-semibold">Voice Training</h2>
+</div>
+
+<div class="grid grid-cols-2 gap-5">
+    <!-- Left: submit sample -->
+    <div>
+        <div class="card p-5 mb-4">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Submit writing sample</h3>
+            <p class="text-xs text-muted mb-3">Paste text you've written — emails, essays, posts, notes. Ollama will analyze your voice and style.</p>
+            <textarea id="sample-text" class="w-full h-40" placeholder="Paste your text here..."></textarea>
+            <div class="flex justify-end mt-3">
+                <button onclick="submitSample()" id="submit-btn" class="btn-primary">
+                    <span id="submit-text">Analyze</span>
+                    <span id="submit-spin" class="spinner hidden ml-2"></span>
+                </button>
+            </div>
+        </div>
+
+        {% if samples %}
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Samples ({{ samples|length }})</h3>
+        <div class="space-y-2">
+            {% for s in samples %}
+            <div class="card p-4">
+                <div class="flex justify-between items-start mb-2">
+                    <span class="text-xs text-muted">{{ s['created'][:10] }}</span>
+                    <button onclick="deleteSample({{ s['id'] }})" class="btn-danger">Remove</button>
+                </div>
+                <p class="text-xs text-neutral-600 line-clamp-2 mb-2">{{ s['text'][:200] }}{% if s['text']|length > 200 %}...{% endif %}</p>
+                {% if s['analysis'] %}
+                <details class="text-xs">
+                    <summary class="text-accent cursor-pointer">View analysis</summary>
+                    <p class="mt-2 text-neutral-500 leading-relaxed">{{ s['analysis'] }}</p>
+                </details>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Right: current voice profile -->
+    <div>
+        <div class="card p-5">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Current Voice Profile</h3>
+            {% if voice_profile %}
+            <p class="text-sm leading-relaxed text-neutral-600">{{ voice_profile }}</p>
+            {% else %}
+            <p class="text-sm text-muted">No voice profile yet. Submit writing samples to build one.</p>
+            <p class="text-xs text-muted mt-2">The voice profile is used by all AI-generated content (inbox drafts, chat responses) to match your writing style.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+</style>
+<script>
+async function submitSample() {
+    const text = document.getElementById('sample-text').value.trim();
+    if (!text) { toast('Paste some text first'); return; }
+    const btn = document.getElementById('submit-btn');
+    const label = document.getElementById('submit-text');
+    const spin = document.getElementById('submit-spin');
+    btn.disabled = true;
+    label.textContent = 'Analyzing...';
+    spin.classList.remove('hidden');
+    await api('/api/voice/submit', { method: 'POST', body: { text } });
+    toast('Sample analyzed — voice profile updated');
+    location.reload();
+}
+
+async function deleteSample(id) {
+    await api(`/api/voice/${id}`, { method: 'DELETE' });
+    location.reload();
+}
+</script>
+{% endblock %}

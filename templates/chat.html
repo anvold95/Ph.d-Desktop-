@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}AI Chat — PhD Command Center{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+    <h2 class="text-lg font-semibold">AI Chat</h2>
+    <button onclick="clearChat()" class="btn-outline text-xs">Clear history</button>
+</div>
+
+<div class="card flex flex-col" style="height: calc(100vh - 160px);">
+    <!-- Messages -->
+    <div id="messages" class="flex-1 overflow-y-auto p-5 space-y-4">
+        {% if not history %}
+        <div class="text-center py-12">
+            <p class="text-sm text-muted mb-1">Chat with your PhD AI assistant.</p>
+            <p class="text-xs text-muted">It knows your research angle, programs, tasks, and voice profile.</p>
+        </div>
+        {% endif %}
+        {% for m in history %}
+        <div class="flex {% if m['role'] == 'user' %}justify-end{% endif %}">
+            <div class="max-w-[75%] {% if m['role'] == 'user' %}bg-accent text-white{% else %}bg-surface border border-border{% endif %} rounded-lg px-4 py-3 text-sm leading-relaxed">
+                <div class="whitespace-pre-line">{{ m['content'] }}</div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Input -->
+    <div class="border-t border-border p-4">
+        <form onsubmit="sendMessage(event)" class="flex gap-3">
+            <input id="chat-input" type="text" class="flex-1" placeholder="Ask something..." autocomplete="off">
+            <button type="submit" id="send-btn" class="btn-primary">Send</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const messagesEl = document.getElementById('messages');
+messagesEl.scrollTop = messagesEl.scrollHeight;
+
+async function sendMessage(e) {
+    e.preventDefault();
+    const input = document.getElementById('chat-input');
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    // Show user message
+    appendMsg('user', msg);
+    input.value = '';
+
+    // Show typing indicator
+    const typing = document.createElement('div');
+    typing.className = 'flex';
+    typing.innerHTML = '<div class="bg-surface border border-border rounded-lg px-4 py-3 text-sm text-muted"><span class="spinner mr-2"></span>Thinking...</div>';
+    messagesEl.appendChild(typing);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    const btn = document.getElementById('send-btn');
+    btn.disabled = true;
+
+    const res = await api('/api/chat', { method: 'POST', body: { message: msg } });
+
+    messagesEl.removeChild(typing);
+    btn.disabled = false;
+
+    if (res.reply) {
+        appendMsg('assistant', res.reply);
+    } else {
+        appendMsg('assistant', res.error || 'No response');
+    }
+}
+
+function appendMsg(role, content) {
+    const div = document.createElement('div');
+    div.className = `flex ${role === 'user' ? 'justify-end' : ''}`;
+    const bubble = document.createElement('div');
+    bubble.className = `max-w-[75%] ${role === 'user' ? 'bg-accent text-white' : 'bg-surface border border-border'} rounded-lg px-4 py-3 text-sm leading-relaxed`;
+    bubble.innerHTML = `<div class="whitespace-pre-line">${escapeHtml(content)}</div>`;
+    div.appendChild(bubble);
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function escapeHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+}
+
+async function clearChat() {
+    if (!confirm('Clear all chat history?')) return;
+    await api('/api/chat/clear', { method: 'POST' });
+    location.reload();
+}
+</script>
+{% endblock %}
