@@ -437,7 +437,7 @@ def scrape_eflux():
         items = soup.select("article, [class*='Item'], [class*='card']")
         if not items:
             items = soup.find_all("a", href=re.compile(r"/(announcements|architecture)/\d+"))
-        for item in items[:20]:
+        for item in items[:40]:
             a_tag = item.find("a", href=True) if item.name != "a" else item
             if not a_tag or not a_tag.get("href"):
                 continue
@@ -469,7 +469,7 @@ def scrape_archinect():
         items = soup.select("article, [class*='ListItem'], [class*='card'], .item")
         if not items:
             items = soup.find_all("a", href=re.compile(r"/(competitions|features)/"))
-        for item in items[:15]:
+        for item in items[:30]:
             a_tag = item.find("a", href=True) if item.name != "a" else item
             if not a_tag or not a_tag.get("href"):
                 continue
@@ -494,7 +494,9 @@ def scrape_archinect():
 def scrape_findaphd():
     results = []
     for q in ["architecture+housing", "urban+design+heritage",
-              "adaptive+reuse", "postwar+housing+architecture"]:
+              "adaptive+reuse", "postwar+housing+architecture",
+              "social+housing+renovation", "built+environment+sustainability",
+              "architectural+history+conservation"]:
         r = _get(f"https://www.findaphd.com/phds/?Keywords={q}")
         if not r:
             continue
@@ -523,14 +525,13 @@ def scrape_findaphd():
                     "url": link, "source": "FindAPhD",
                     "relevance_score": score, "category": ", ".join(cats),
                 })
-        if results:
-            break
     return results
 
 
 def scrape_wikicfp():
     results = []
-    for term in ["architecture", "urban+design", "heritage+building", "housing+urban"]:
+    for term in ["architecture", "urban+design", "heritage+building", "housing+urban",
+                  "social+housing", "adaptive+reuse", "built+environment"]:
         r = _get(f"http://www.wikicfp.com/cfp/servlet/tool.search?q={term}&year=f")
         if not r:
             continue
@@ -563,7 +564,7 @@ def scrape_wikicfp():
                     "url": href, "source": "WikiCFP",
                     "relevance_score": score, "category": ", ".join(cats),
                 })
-        if len(results) >= 10:
+        if len(results) >= 25:
             break
     return results
 
@@ -597,8 +598,6 @@ def scrape_euraxess():
                     "url": link, "source": "EURAXESS",
                     "relevance_score": score, "category": ", ".join(cats),
                 })
-        if results:
-            break
     return results
 
 
@@ -633,6 +632,140 @@ def scrape_jobs_ac_uk():
     return results
 
 
+def scrape_archdaily():
+    """Scrape ArchDaily competitions and calls."""
+    results = []
+    for path in ["/search/projects/categories/housing",
+                 "/tag/adaptive-reuse", "/tag/social-housing",
+                 "/tag/renovation", "/tag/heritage"]:
+        r = _get(f"https://www.archdaily.com{path}")
+        if not r:
+            continue
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select("article, [class*='card'], [class*='afd-search-list__item'], li[class*='result']")
+        for item in items[:25]:
+            a_tag = item.find("a", href=True) if item.name != "a" else item
+            if not a_tag or not a_tag.get("href"):
+                continue
+            title_el = item.find(["h2", "h3", "h4"]) or a_tag
+            title = _clean_text(title_el.get_text())
+            href = a_tag["href"]
+            if not href.startswith("http"):
+                href = f"https://www.archdaily.com{href}"
+            desc_el = item.find("p")
+            desc = _clean_text(desc_el.get_text()[:200]) if desc_el else ""
+            if not _is_junk(title, desc):
+                score, cats = _score_relevance(title, desc)
+                results.append({
+                    "title": title[:150], "type": "project",
+                    "description": desc, "deadline": "",
+                    "url": href, "source": "ArchDaily",
+                    "relevance_score": score, "category": ", ".join(cats),
+                })
+    return results
+
+
+def scrape_competitionline():
+    """Scrape competitionline.com for architecture competitions."""
+    results = []
+    for path in ["/en/competitions/", "/en/competitions/results/"]:
+        r = _get(f"https://www.competitionline.com{path}")
+        if not r:
+            continue
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select("article, .item, [class*='competition'], [class*='card'], .teaser")
+        for item in items[:25]:
+            a_tag = item.find("a", href=True) if item.name != "a" else item
+            if not a_tag or not a_tag.get("href"):
+                continue
+            title_el = item.find(["h2", "h3", "h4"]) or a_tag
+            title = _clean_text(title_el.get_text())
+            href = a_tag["href"]
+            if not href.startswith("http"):
+                href = f"https://www.competitionline.com{href}"
+            desc_el = item.find("p")
+            desc = _clean_text(desc_el.get_text()[:200]) if desc_el else ""
+            if not _is_junk(title, desc):
+                score, cats = _score_relevance(title, desc)
+                results.append({
+                    "title": title[:150], "type": "competition",
+                    "description": desc, "deadline": "",
+                    "url": href, "source": "competitionline",
+                    "relevance_score": score, "category": ", ".join(cats),
+                })
+    return results
+
+
+def scrape_cordis():
+    """Scrape EU CORDIS for architecture/housing research projects and calls."""
+    results = []
+    queries = [
+        "architecture+housing+urban",
+        "heritage+building+renovation",
+        "social+housing+adaptive+reuse",
+        "urban+transformation+sustainability",
+    ]
+    for q in queries:
+        r = _get(f"https://cordis.europa.eu/search?q={q}&type=project")
+        if not r:
+            continue
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select("article, .result, [class*='card'], [class*='search-result'], .item")
+        for item in items[:15]:
+            a_tag = item.find("a", href=True)
+            if not a_tag:
+                continue
+            title_el = item.find(["h2", "h3", "h4"]) or a_tag
+            title = _clean_text(title_el.get_text())
+            href = a_tag["href"]
+            if not href.startswith("http"):
+                href = f"https://cordis.europa.eu{href}"
+            desc_el = item.find("p")
+            desc = _clean_text(desc_el.get_text()[:200]) if desc_el else ""
+            if not _is_junk(title, desc):
+                score, cats = _score_relevance(title, desc)
+                results.append({
+                    "title": title[:150], "type": "eu_project",
+                    "description": desc, "deadline": "",
+                    "url": href, "source": "CORDIS",
+                    "relevance_score": score, "category": ", ".join(cats),
+                })
+    return results
+
+
+def scrape_scholarshipdb():
+    """Scrape ScholarshipDB for architecture PhD opportunities."""
+    results = []
+    for q in ["architecture+phd", "urban+design+phd", "housing+heritage+phd"]:
+        r = _get(f"https://www.scholarshipdb.net/scholarships?q={q}")
+        if not r:
+            continue
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select("article, .scholarship, [class*='result'], [class*='card'], .item")
+        for item in items[:15]:
+            a_tag = item.find("a", href=True)
+            if not a_tag:
+                continue
+            title_el = item.find(["h2", "h3", "h4"]) or a_tag
+            title = _clean_text(title_el.get_text())
+            href = a_tag["href"]
+            if not href.startswith("http"):
+                href = f"https://www.scholarshipdb.net{href}"
+            desc_el = item.find("p")
+            desc = _clean_text(desc_el.get_text()[:200]) if desc_el else ""
+            if not _is_junk(title, desc):
+                score, cats = _score_relevance(title, desc)
+                if "opportunity" not in cats:
+                    cats.append("opportunity")
+                results.append({
+                    "title": title[:150], "type": "phd",
+                    "description": desc, "deadline": "",
+                    "url": href, "source": "ScholarshipDB",
+                    "relevance_score": score, "category": ", ".join(cats),
+                })
+    return results
+
+
 def scrape_all_sources():
     all_results = []
     scrapers = [
@@ -642,6 +775,10 @@ def scrape_all_sources():
         ("WikiCFP", scrape_wikicfp),
         ("EURAXESS", scrape_euraxess),
         ("jobs.ac.uk", scrape_jobs_ac_uk),
+        ("ArchDaily", scrape_archdaily),
+        ("competitionline", scrape_competitionline),
+        ("CORDIS", scrape_cordis),
+        ("ScholarshipDB", scrape_scholarshipdb),
     ]
     for name, fn in scrapers:
         try:
@@ -669,7 +806,7 @@ def scrape_all_sources():
     log.info("Scraped %d total, %d unique, %d relevant",
              len(all_results), len(unique), len(relevant))
 
-    return relevant if relevant else unique[:10]
+    return relevant if relevant else unique[:30]
 
 
 # ---------------------------------------------------------------------------
@@ -684,14 +821,18 @@ def job_scan_open_calls():
         if not scraped:
             log.warning("No results scraped")
             return
-        for c in scraped[:15]:
+        for c in scraped[:50]:
+            existing = db.execute("SELECT 1 FROM open_calls WHERE title=? AND source=?",
+                                  (c["title"], c["source"])).fetchone()
+            if existing:
+                continue
             db.execute(
                 "INSERT INTO open_calls (title, type, category, description, deadline, url, source, relevance_score) VALUES (?,?,?,?,?,?,?,?)",
                 (c["title"], c["type"], c.get("category", ""),
                  c["description"], c["deadline"], c["url"],
                  c["source"], c.get("relevance_score", 0)))
         db.commit()
-        log.info("Added %d open calls", min(len(scraped), 15))
+        log.info("Added up to %d open calls", min(len(scraped), 50))
 
 
 def job_generate_drafts():
@@ -911,7 +1052,7 @@ def generate_open_calls():
 
     db = get_db()
     added = 0
-    for c in scraped[:20]:
+    for c in scraped[:50]:
         # Skip duplicates already in DB
         existing = db.execute("SELECT 1 FROM open_calls WHERE title=? AND source=?",
                               (c["title"], c["source"])).fetchone()
